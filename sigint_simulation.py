@@ -465,7 +465,7 @@ def train_model(model, train_loader, val_loader, num_epochs=20):
 
 def plot_sample_spectrograms():
     """Generate and plot sample spectrograms with time and frequency domain analysis"""
-    gen = SignalGenerator(snr_db=-5)
+    gen = SignalGenerator(snr_db=5)  # Higher SNR for accurate parameter extraction
 
     signals = {
         'Sine': gen.generate_sine(),
