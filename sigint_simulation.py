@@ -1,0 +1,420 @@
+#!/usr/bin/env python3
+"""
+SIGINT Receiver Simulation
+A Multi-Task IQ-Based Neural Receiver for Weak-Signal Detection and Parametric Classification
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy import signal
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.model_selection import train_test_split
+import warnings
+warnings.filterwarnings('ignore')
+
+# Set random seeds for reproducibility
+np.random.seed(42)
+torch.manual_seed(42)
+
+# Check for GPU
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"Using device: {device}")
+
+# ==================== Signal Generation ====================
+
+class SignalGenerator:
+    """Generate various types of SIGINT signals"""
+
+    def __init__(self, fs=1000, duration=1.0, snr_db=-10):
+        self.fs = fs  # Sampling frequency
+        self.duration = duration
+        self.snr_db = snr_db
+        self.t = np.linspace(0, duration, int(fs * duration))
+
+    def add_noise(self, signal, snr_db):
+        """Add AWGN noise to signal"""
+        signal_power = np.mean(np.abs(signal)**2)
+        snr_linear = 10**(snr_db / 10)
+        noise_power = signal_power / snr_linear
+        noise = np.sqrt(noise_power / 2) * (np.random.randn(len(signal)) +
+                                            1j * np.random.randn(len(signal)))
+        return signal + noise
+
+    def generate_sine(self, freq=100):
+        """Generate sine wave signal"""
+        signal = np.exp(1j * 2 * np.pi * freq * self.t)
+        return self.add_noise(signal, self.snr_db)
+
+    def generate_chirp(self, f0=50, f1=200):
+        """Generate chirp signal"""
+        chirp_sig = signal.chirp(self.t, f0, self.duration, f1, method='linear')
+        complex_signal = chirp_sig * np.exp(1j * 2 * np.pi * f0 * self.t)
+        return self.add_noise(complex_signal, self.snr_db)
+
+    def generate_fsk(self, freqs=[80, 120], symbol_rate=50):
+        """Generate FSK (Frequency Shift Keying) signal"""
+        samples_per_symbol = int(self.fs / symbol_rate)
+        n_symbols = int(len(self.t) / samples_per_symbol)
+
+        # Random binary data
+        bits = np.random.randint(0, 2, n_symbols)
+
+        # Generate FSK signal
+        fsk_signal = np.zeros(len(self.t), dtype=complex)
+        for i, bit in enumerate(bits):
+            start_idx = i * samples_per_symbol
+            end_idx = min((i + 1) * samples_per_symbol, len(self.t))
+            t_symbol = self.t[start_idx:end_idx] - self.t[start_idx]
+            freq = freqs[bit]
+            fsk_signal[start_idx:end_idx] = np.exp(1j * 2 * np.pi * freq * t_symbol)
+
+        return self.add_noise(fsk_signal, self.snr_db)
+
+    def generate_fhss(self, freq_set=[60, 100, 140, 180], hop_rate=100):
+        """Generate FHSS (Frequency Hopping Spread Spectrum) signal"""
+        samples_per_hop = int(self.fs / hop_rate)
+        n_hops = int(len(self.t) / samples_per_hop)
+
+        # Random frequency hops
+        freq_sequence = np.random.choice(freq_set, n_hops)
+
+        # Generate FHSS signal
+        fhss_signal = np.zeros(len(self.t), dtype=complex)
+        for i, freq in enumerate(freq_sequence):
+            start_idx = i * samples_per_hop
+            end_idx = min((i + 1) * samples_per_hop, len(self.t))
+            t_hop = self.t[start_idx:end_idx] - self.t[start_idx]
+            fhss_signal[start_idx:end_idx] = np.exp(1j * 2 * np.pi * freq * t_hop)
+
+        return self.add_noise(fhss_signal, self.snr_db)
+
+def compute_spectrogram(signal, fs=1000, nperseg=128):
+    """Compute spectrogram of signal"""
+    f, t, Sxx = signal.spectrogram(signal, fs=fs, nperseg=nperseg,
+                                    noverlap=nperseg//2, mode='magnitude')
+    return f, t, 20 * np.log10(Sxx + 1e-10)  # Convert to dB
+
+# ==================== Dataset ====================
+
+class SIGINTDataset(Dataset):
+    """Dataset for SIGINT signal classification"""
+
+    def __init__(self, n_samples=1000, snr_range=(-15, 5)):
+        self.n_samples = n_samples
+        self.data = []
+        self.labels = []
+        self.signal_types = ['Sine', 'Chirp', 'FSK', 'FHSS']
+
+        print("Generating dataset...")
+        for i in range(n_samples):
+            # Random SNR for each sample
+            snr = np.random.uniform(*snr_range)
+            gen = SignalGenerator(snr_db=snr)
+
+            # Random signal type
+            signal_type = i % 4
+
+            if signal_type == 0:
+                sig = gen.generate_sine()
+            elif signal_type == 1:
+                sig = gen.generate_chirp()
+            elif signal_type == 2:
+                sig = gen.generate_fsk()
+            else:
+                sig = gen.generate_fhss()
+
+            # Compute spectrogram
+            _, _, Sxx = compute_spectrogram(sig)
+
+            # Resize to fixed size
+            Sxx_resized = self._resize_spectrogram(Sxx, (64, 64))
+
+            self.data.append(Sxx_resized)
+            self.labels.append(signal_type)
+
+            if (i + 1) % 200 == 0:
+                print(f"  Generated {i + 1}/{n_samples} samples")
+
+        self.data = np.array(self.data)
+        self.labels = np.array(self.labels)
+
+    def _resize_spectrogram(self, spec, target_size):
+        """Resize spectrogram to target size"""
+        from scipy.ndimage import zoom
+        zoom_factors = (target_size[0] / spec.shape[0],
+                       target_size[1] / spec.shape[1])
+        return zoom(spec, zoom_factors, order=1)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        x = torch.FloatTensor(self.data[idx]).unsqueeze(0)  # Add channel dimension
+        y = torch.LongTensor([self.labels[idx]])[0]
+        return x, y
+
+# ==================== Neural Network Model ====================
+
+class SIGINTClassifier(nn.Module):
+    """CNN-based SIGINT signal classifier"""
+
+    def __init__(self, num_classes=4):
+        super(SIGINTClassifier, self).__init__()
+
+        self.features = nn.Sequential(
+            # Conv Block 1
+            nn.Conv2d(1, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2, 2),
+
+            # Conv Block 2
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2, 2),
+
+            # Conv Block 3
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2, 2),
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.5),
+            nn.Linear(128 * 8 * 8, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.5),
+            nn.Linear(256, num_classes)
+        )
+
+    def forward(self, x):
+        x = self.features(x)
+        x = x.view(x.size(0), -1)
+        x = self.classifier(x)
+        return x
+
+# ==================== Training ====================
+
+def train_model(model, train_loader, val_loader, num_epochs=20):
+    """Train the SIGINT classifier"""
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3)
+
+    history = {
+        'train_loss': [], 'train_acc': [],
+        'val_loss': [], 'val_acc': []
+    }
+
+    print("\nTraining model...")
+    for epoch in range(num_epochs):
+        # Training
+        model.train()
+        train_loss = 0
+        train_correct = 0
+        train_total = 0
+
+        for inputs, labels in train_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+
+            train_loss += loss.item()
+            _, predicted = outputs.max(1)
+            train_total += labels.size(0)
+            train_correct += predicted.eq(labels).sum().item()
+
+        train_loss = train_loss / len(train_loader)
+        train_acc = 100. * train_correct / train_total
+
+        # Validation
+        model.eval()
+        val_loss = 0
+        val_correct = 0
+        val_total = 0
+
+        with torch.no_grad():
+            for inputs, labels in val_loader:
+                inputs, labels = inputs.to(device), labels.to(device)
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+
+                val_loss += loss.item()
+                _, predicted = outputs.max(1)
+                val_total += labels.size(0)
+                val_correct += predicted.eq(labels).sum().item()
+
+        val_loss = val_loss / len(val_loader)
+        val_acc = 100. * val_correct / val_total
+
+        history['train_loss'].append(train_loss)
+        history['train_acc'].append(train_acc)
+        history['val_loss'].append(val_loss)
+        history['val_acc'].append(val_acc)
+
+        scheduler.step(val_loss)
+
+        if (epoch + 1) % 5 == 0:
+            print(f"Epoch [{epoch+1}/{num_epochs}] "
+                  f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}% | "
+                  f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
+
+    return history
+
+# ==================== Visualization ====================
+
+def plot_sample_spectrograms():
+    """Generate and plot sample spectrograms"""
+    gen = SignalGenerator(snr_db=-5)
+
+    signals = {
+        'Sine': gen.generate_sine(),
+        'Chirp': gen.generate_chirp(),
+        'FSK': gen.generate_fsk(),
+        'FHSS': gen.generate_fhss()
+    }
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    axes = axes.ravel()
+
+    for idx, (name, sig) in enumerate(signals.items()):
+        f, t, Sxx = compute_spectrogram(sig)
+
+        im = axes[idx].pcolormesh(t, f, Sxx, shading='gouraud', cmap='jet')
+        axes[idx].set_ylabel('Frequency [Hz]')
+        axes[idx].set_xlabel('Time [s]')
+        axes[idx].set_title(f'{name} Signal Spectrogram')
+        plt.colorbar(im, ax=axes[idx], label='Magnitude [dB]')
+
+    plt.tight_layout()
+    plt.savefig('sample_spectrograms.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print("✓ Saved sample_spectrograms.png")
+
+def plot_training_results(history):
+    """Plot training history"""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+    # Loss plot
+    ax1.plot(history['train_loss'], label='Train Loss', marker='o')
+    ax1.plot(history['val_loss'], label='Validation Loss', marker='s')
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.set_title('Training and Validation Loss')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    # Accuracy plot
+    ax2.plot(history['train_acc'], label='Train Accuracy', marker='o')
+    ax2.plot(history['val_acc'], label='Validation Accuracy', marker='s')
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Accuracy (%)')
+    ax2.set_title('Training and Validation Accuracy')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig('training_results.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print("✓ Saved training_results.png")
+
+def plot_confusion_matrix(model, test_loader):
+    """Generate and plot confusion matrix"""
+    model.eval()
+    all_preds = []
+    all_labels = []
+
+    with torch.no_grad():
+        for inputs, labels in test_loader:
+            inputs = inputs.to(device)
+            outputs = model(inputs)
+            _, predicted = outputs.max(1)
+            all_preds.extend(predicted.cpu().numpy())
+            all_labels.extend(labels.numpy())
+
+    cm = confusion_matrix(all_labels, all_preds)
+
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                xticklabels=['Sine', 'Chirp', 'FSK', 'FHSS'],
+                yticklabels=['Sine', 'Chirp', 'FSK', 'FHSS'])
+    plt.ylabel('True Label')
+    plt.xlabel('Predicted Label')
+    plt.title('Confusion Matrix - SIGINT Signal Classification')
+    plt.tight_layout()
+    plt.savefig('confusion_matrix.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print("✓ Saved confusion_matrix.png")
+
+    # Print classification report
+    print("\nClassification Report:")
+    print(classification_report(all_labels, all_preds,
+                               target_names=['Sine', 'Chirp', 'FSK', 'FHSS']))
+
+# ==================== Main ====================
+
+def main():
+    print("="*70)
+    print("SIGINT Neural Receiver Simulation")
+    print("="*70)
+
+    # 1. Generate sample spectrograms
+    print("\n[1/4] Generating sample spectrograms...")
+    plot_sample_spectrograms()
+
+    # 2. Create dataset
+    print("\n[2/4] Creating dataset...")
+    dataset = SIGINTDataset(n_samples=2000)
+
+    # Split dataset
+    train_size = int(0.7 * len(dataset))
+    val_size = int(0.15 * len(dataset))
+    test_size = len(dataset) - train_size - val_size
+
+    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
+        dataset, [train_size, val_size, test_size])
+
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+
+    print(f"  Train: {train_size}, Val: {val_size}, Test: {test_size}")
+
+    # 3. Train model
+    print("\n[3/4] Training classifier...")
+    model = SIGINTClassifier(num_classes=4).to(device)
+    print(f"  Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+
+    history = train_model(model, train_loader, val_loader, num_epochs=20)
+
+    # 4. Evaluate and visualize
+    print("\n[4/4] Generating results...")
+    plot_training_results(history)
+    plot_confusion_matrix(model, test_loader)
+
+    # Save model
+    torch.save(model.state_dict(), 'sigint_detector_model.pth')
+    print("✓ Saved sigint_detector_model.pth")
+
+    print("\n" + "="*70)
+    print("✅ Simulation Complete!")
+    print("="*70)
+    print("\nGenerated files:")
+    print("  - sample_spectrograms.png")
+    print("  - training_results.png")
+    print("  - confusion_matrix.png")
+    print("  - sigint_detector_model.pth")
+
+if __name__ == "__main__":
+    main()
