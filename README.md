@@ -41,13 +41,42 @@ pip install -r requirements.txt
 
 ### Google Colab
 
+**방법 1: 노트북 사용** (초보자 추천)
+
 Open `run_simulation.ipynb` in Google Colab for a ready-to-run notebook with GPU support.
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hyeonhwilee/Neural-Receiver-for-Weak-Signal-Detection-and-Parametric-Classification/blob/claude/fix-sigint-simulation-errors-01GfBwMpqJRhjxy1LkgE4GfF/run_simulation.ipynb)
 
-**참고**: 노트북 상단에서 브랜치를 선택할 수 있습니다:
+**방법 2: 직접 실행** (빠른 실행)
+
+Google Colab에서 새 노트북을 만들고 아래 코드를 셀에 붙여넣어 실행:
+
+```python
+# GPU 확인 및 저장소 클론
+!nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader
+import os, shutil
+os.chdir('/content')
+if os.path.exists('Neural-Receiver-for-Weak-Signal-Detection-and-Parametric-Classification'):
+    shutil.rmtree('Neural-Receiver-for-Weak-Signal-Detection-and-Parametric-Classification')
+!git clone -b claude/fix-sigint-simulation-errors-01GfBwMpqJRhjxy1LkgE4GfF https://github.com/hyeonhwilee/Neural-Receiver-for-Weak-Signal-Detection-and-Parametric-Classification.git
+os.chdir('/content/Neural-Receiver-for-Weak-Signal-Detection-and-Parametric-Classification')
+
+# 라이브러리 설치 및 시뮬레이션 실행
+!pip install -q numpy scipy matplotlib torch torchvision scikit-learn pandas seaborn
+!python sigint_simulation.py
+
+# 결과 표시
+from IPython.display import Image, display
+display(Image('sample_spectrograms.png'))
+display(Image('training_results.png'))
+display(Image('confusion_matrix.png'))
+```
+
+📖 **상세 가이드**: [COLAB_QUICK_START.md](./COLAB_QUICK_START.md)
+
+**참고**:
 - 현재 작업 브랜치: `claude/fix-sigint-simulation-errors-01GfBwMpqJRhjxy1LkgE4GfF`
-- 메인 브랜치에 merge된 후: `main`
+- 메인 브랜치에 merge된 후: `main`으로 브랜치명 변경
 
 ## Usage
 
