@@ -54,20 +54,24 @@ print("\n" + "="*70)
 print("📊 시뮬레이션 결과")
 print("="*70)
 
-print("\n1️⃣ 샘플 Spectrogram (Sine, Chirp, FSK, FHSS):")
+print("\n1️⃣ 샘플 신호 시각화 (시간/주파수/스펙트로그램):")
 display(Image('sample_spectrograms.png'))
 
-print("\n2️⃣ 학습 결과 (손실 및 정확도):")
+print("\n2️⃣ 신호 제원 분석표:")
+display(Image('signal_parameters.png'))
+
+print("\n3️⃣ 학습 결과 (손실 및 정확도):")
 display(Image('training_results.png'))
 
-print("\n3️⃣ Confusion Matrix:")
+print("\n4️⃣ Confusion Matrix:")
 display(Image('confusion_matrix.png'))
 
 print("\n✅ 완료! 생성된 파일:")
-print("  - sample_spectrograms.png")
-print("  - training_results.png")
-print("  - confusion_matrix.png")
-print("  - sigint_detector_model.pth")
+print("  - sample_spectrograms.png      (신호 시각화)")
+print("  - signal_parameters.png        (신호 제원 분석표)")
+print("  - training_results.png         (학습 결과)")
+print("  - confusion_matrix.png         (혼동 행렬)")
+print("  - sigint_detector_model.pth    (학습된 모델)")
 
 # 결과 다운로드 (선택사항)
 print("\n💾 파일을 다운로드하려면 아래 코드의 주석을 해제하세요:")
@@ -136,20 +140,24 @@ print("\n" + "="*70)
 print("📊 시뮬레이션 결과")
 print("="*70)
 
-print("\n1️⃣ 샘플 Spectrogram (Sine, Chirp, FSK, FHSS):")
+print("\n1️⃣ 샘플 신호 시각화 (시간/주파수/스펙트로그램):")
 display(Image('sample_spectrograms.png'))
 
-print("\n2️⃣ 학습 결과 (손실 및 정확도):")
+print("\n2️⃣ 신호 제원 분석표:")
+display(Image('signal_parameters.png'))
+
+print("\n3️⃣ 학습 결과 (손실 및 정확도):")
 display(Image('training_results.png'))
 
-print("\n3️⃣ Confusion Matrix:")
+print("\n4️⃣ Confusion Matrix:")
 display(Image('confusion_matrix.png'))
 
 print("\n✅ 완료! 생성된 파일:")
-print("  - sample_spectrograms.png")
-print("  - training_results.png")
-print("  - confusion_matrix.png")
-print("  - sigint_detector_model.pth")
+print("  - sample_spectrograms.png      (신호 시각화)")
+print("  - signal_parameters.png        (신호 제원 분석표)")
+print("  - training_results.png         (학습 결과)")
+print("  - confusion_matrix.png         (혼동 행렬)")
+print("  - sigint_detector_model.pth    (학습된 모델)")
 ```
 
 ### 셀 6 (선택): 결과 다운로드

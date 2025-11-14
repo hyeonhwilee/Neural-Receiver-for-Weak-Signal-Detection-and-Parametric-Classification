@@ -99,6 +99,113 @@ def compute_spectrogram(sig, fs=1000, nperseg=128):
                                     noverlap=nperseg//2, mode='magnitude')
     return f, t, 20 * np.log10(Sxx + 1e-10)  # Convert to dB
 
+# ==================== Signal Parameter Extraction ====================
+
+def extract_signal_parameters(sig, fs=1000, signal_name='Unknown'):
+    """
+    Extract comprehensive signal parameters
+    Returns: dict with frequency, power, bandwidth, modulation, onset time
+    """
+    params = {}
+
+    # 1. Signal Power (dBm)
+    signal_power = np.mean(np.abs(sig)**2)
+    params['power_dbm'] = 10 * np.log10(signal_power * 1000 + 1e-10)  # Convert to dBm
+    params['power_linear'] = signal_power
+
+    # 2. FFT Analysis
+    fft_result = np.fft.fft(sig)
+    fft_freq = np.fft.fftfreq(len(sig), 1/fs)
+    fft_magnitude = np.abs(fft_result)
+    fft_power = fft_magnitude**2
+
+    # Only consider positive frequencies
+    positive_idx = fft_freq >= 0
+    fft_freq_pos = fft_freq[positive_idx]
+    fft_power_pos = fft_power[positive_idx]
+
+    # 3. Center Frequency (weighted average or peak)
+    peak_idx = np.argmax(fft_power_pos)
+    params['peak_frequency'] = fft_freq_pos[peak_idx]
+
+    # Weighted center frequency
+    total_power = np.sum(fft_power_pos)
+    params['center_frequency'] = np.sum(fft_freq_pos * fft_power_pos) / total_power if total_power > 0 else 0
+
+    # 4. Bandwidth (99% power bandwidth)
+    sorted_indices = np.argsort(fft_power_pos)[::-1]
+    cumsum_power = np.cumsum(fft_power_pos[sorted_indices])
+    threshold_idx = np.where(cumsum_power >= 0.99 * total_power)[0]
+    if len(threshold_idx) > 0:
+        significant_freqs = fft_freq_pos[sorted_indices[:threshold_idx[0]+1]]
+        params['bandwidth'] = np.max(significant_freqs) - np.min(significant_freqs)
+    else:
+        params['bandwidth'] = 0
+
+    # 5. Occupied Bandwidth (alternative: 3dB bandwidth)
+    max_power_db = 10 * np.log10(np.max(fft_power_pos) + 1e-10)
+    threshold_3db = max_power_db - 3
+    fft_power_db = 10 * np.log10(fft_power_pos + 1e-10)
+    above_threshold = fft_power_db >= threshold_3db
+    if np.any(above_threshold):
+        freq_above = fft_freq_pos[above_threshold]
+        params['bandwidth_3db'] = np.max(freq_above) - np.min(freq_above)
+    else:
+        params['bandwidth_3db'] = 0
+
+    # 6. Signal Onset Detection (energy-based)
+    window_size = int(0.01 * fs)  # 10ms window
+    energy = np.array([np.sum(np.abs(sig[i:i+window_size])**2)
+                       for i in range(0, len(sig)-window_size, window_size//2)])
+    threshold = np.mean(energy) + 2 * np.std(energy)
+    onset_idx = np.where(energy > threshold)[0]
+    if len(onset_idx) > 0:
+        params['onset_time'] = onset_idx[0] * (window_size//2) / fs
+    else:
+        params['onset_time'] = 0.0
+
+    # 7. Modulation Type Detection (heuristic)
+    instantaneous_freq = np.diff(np.unwrap(np.angle(sig))) * fs / (2 * np.pi)
+    freq_variation = np.std(instantaneous_freq)
+
+    # Count frequency peaks for FHSS detection
+    num_peaks = len(signal.find_peaks(fft_power_pos, height=0.1*np.max(fft_power_pos))[0])
+
+    if num_peaks > 3:
+        params['modulation'] = 'FHSS'
+    elif freq_variation > 50:
+        params['modulation'] = 'Chirp/FM'
+    elif num_peaks == 2:
+        params['modulation'] = 'FSK'
+    else:
+        params['modulation'] = 'CW/AM'
+
+    # Override with known signal name if provided
+    if signal_name != 'Unknown':
+        params['modulation'] = signal_name
+
+    # 8. SNR Estimation (simple noise floor estimation)
+    noise_floor = np.median(fft_power_db)
+    signal_peak = np.max(fft_power_db)
+    params['estimated_snr'] = signal_peak - noise_floor
+
+    return params
+
+def print_signal_parameters(params, signal_name):
+    """Print signal parameters in a formatted table"""
+    print(f"\n{'='*60}")
+    print(f"Signal: {signal_name}")
+    print(f"{'='*60}")
+    print(f"  Center Frequency:     {params['center_frequency']:.2f} Hz")
+    print(f"  Peak Frequency:       {params['peak_frequency']:.2f} Hz")
+    print(f"  Signal Power:         {params['power_dbm']:.2f} dBm")
+    print(f"  Bandwidth (99%):      {params['bandwidth']:.2f} Hz")
+    print(f"  Bandwidth (3dB):      {params['bandwidth_3db']:.2f} Hz")
+    print(f"  Modulation:           {params['modulation']}")
+    print(f"  Signal Onset:         {params['onset_time']:.4f} s")
+    print(f"  Estimated SNR:        {params['estimated_snr']:.2f} dB")
+    print(f"{'='*60}")
+
 # ==================== Dataset ====================
 
 class SIGINTDataset(Dataset):
@@ -285,19 +392,38 @@ def plot_sample_spectrograms():
         'FHSS': gen.generate_fhss()
     }
 
+    # Extract parameters for all signals
+    print("\n" + "="*70)
+    print("📊 신호 제원 분석 (Signal Parameter Analysis)")
+    print("="*70)
+
+    all_params = {}
+    for name, sig in signals.items():
+        params = extract_signal_parameters(sig, gen.fs, name)
+        all_params[name] = params
+        print_signal_parameters(params, name)
+
     # Create figure with 4 rows (signals) x 3 columns (time, freq, spectrogram)
-    fig = plt.figure(figsize=(18, 16))
+    fig = plt.figure(figsize=(20, 16))
 
     for idx, (name, sig) in enumerate(signals.items()):
+        params = all_params[name]
+
         # Time domain plot (I/Q components)
         ax1 = plt.subplot(4, 3, idx*3 + 1)
         time_axis = np.linspace(0, gen.duration, len(sig))
         ax1.plot(time_axis[:500], np.real(sig[:500]), 'b-', linewidth=0.8, label='I (Real)', alpha=0.7)
         ax1.plot(time_axis[:500], np.imag(sig[:500]), 'r-', linewidth=0.8, label='Q (Imag)', alpha=0.7)
+
+        # Mark onset time
+        if params['onset_time'] < 0.5:  # Only show if in visible range
+            ax1.axvline(params['onset_time'], color='red', linestyle='--', linewidth=1.5,
+                       label=f"Onset: {params['onset_time']:.3f}s", alpha=0.7)
+
         ax1.set_xlabel('Time [s]')
         ax1.set_ylabel('Amplitude')
-        ax1.set_title(f'{name} - Time Domain')
-        ax1.legend(loc='upper right', fontsize=8)
+        ax1.set_title(f'{name} - Time Domain\nPower: {params["power_dbm"]:.1f} dBm')
+        ax1.legend(loc='upper right', fontsize=7)
         ax1.grid(True, alpha=0.3)
 
         # Frequency spectrum (FFT)
@@ -309,9 +435,15 @@ def plot_sample_spectrograms():
         # Plot only positive frequencies
         positive_freq_idx = fft_freq >= 0
         ax2.plot(fft_freq[positive_freq_idx], fft_magnitude[positive_freq_idx], 'g-', linewidth=1.0)
+
+        # Mark center frequency
+        ax2.axvline(params['center_frequency'], color='red', linestyle='--',
+                   linewidth=1.5, label=f"Fc: {params['center_frequency']:.1f} Hz", alpha=0.7)
+
         ax2.set_xlabel('Frequency [Hz]')
         ax2.set_ylabel('Magnitude [dB]')
-        ax2.set_title(f'{name} - Frequency Spectrum')
+        ax2.set_title(f'{name} - Frequency Spectrum\nBW: {params["bandwidth"]:.1f} Hz (99%), {params["bandwidth_3db"]:.1f} Hz (3dB)')
+        ax2.legend(loc='upper right', fontsize=7)
         ax2.grid(True, alpha=0.3)
         ax2.set_xlim([0, gen.fs/2])
 
@@ -321,13 +453,76 @@ def plot_sample_spectrograms():
         im = ax3.pcolormesh(t, f, Sxx, shading='gouraud', cmap='jet')
         ax3.set_ylabel('Frequency [Hz]')
         ax3.set_xlabel('Time [s]')
-        ax3.set_title(f'{name} - Spectrogram')
+        ax3.set_title(f'{name} - Spectrogram\nModulation: {params["modulation"]}, SNR: {params["estimated_snr"]:.1f} dB')
         plt.colorbar(im, ax=ax3, label='Magnitude [dB]')
 
     plt.tight_layout()
     plt.savefig('sample_spectrograms.png', dpi=150, bbox_inches='tight')
     plt.close()
-    print("✓ Saved sample_spectrograms.png")
+    print("\n✓ Saved sample_spectrograms.png")
+
+    # Create parameter summary table
+    create_parameter_table(all_params)
+
+def create_parameter_table(all_params):
+    """Create a visual table of signal parameters"""
+    fig, ax = plt.subplots(figsize=(14, 6))
+    ax.axis('tight')
+    ax.axis('off')
+
+    # Prepare table data
+    headers = ['신호 타입\n(Signal Type)',
+               '중심주파수\n(Fc) [Hz]',
+               '신호세기\n(Power) [dBm]',
+               '대역폭 (99%)\n(BW) [Hz]',
+               '대역폭 (3dB)\n(BW) [Hz]',
+               '변조방식\n(Modulation)',
+               '출현시점\n(Onset) [s]',
+               '추정 SNR\n[dB]']
+
+    table_data = []
+    for name, params in all_params.items():
+        row = [
+            name,
+            f"{params['center_frequency']:.1f}",
+            f"{params['power_dbm']:.2f}",
+            f"{params['bandwidth']:.1f}",
+            f"{params['bandwidth_3db']:.1f}",
+            params['modulation'],
+            f"{params['onset_time']:.4f}",
+            f"{params['estimated_snr']:.1f}"
+        ]
+        table_data.append(row)
+
+    # Create table
+    table = ax.table(cellText=table_data, colLabels=headers,
+                     cellLoc='center', loc='center',
+                     colWidths=[0.12, 0.12, 0.12, 0.13, 0.13, 0.13, 0.12, 0.13])
+
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1, 2.5)
+
+    # Style the header
+    for i in range(len(headers)):
+        cell = table[(0, i)]
+        cell.set_facecolor('#4CAF50')
+        cell.set_text_props(weight='bold', color='white')
+
+    # Alternate row colors
+    for i in range(1, len(table_data) + 1):
+        for j in range(len(headers)):
+            cell = table[(i, j)]
+            if i % 2 == 0:
+                cell.set_facecolor('#f0f0f0')
+            else:
+                cell.set_facecolor('white')
+
+    plt.title('신호 제원 분석표 (Signal Parameter Summary)',
+             fontsize=14, fontweight='bold', pad=20)
+    plt.savefig('signal_parameters.png', dpi=150, bbox_inches='tight')
+    plt.close()
+    print("✓ Saved signal_parameters.png")
 
 def plot_training_results(history):
     """Plot training history"""
@@ -438,10 +633,11 @@ def main():
     print("✅ Simulation Complete!")
     print("="*70)
     print("\nGenerated files:")
-    print("  - sample_spectrograms.png")
-    print("  - training_results.png")
-    print("  - confusion_matrix.png")
-    print("  - sigint_detector_model.pth")
+    print("  - sample_spectrograms.png      (신호 시각화: 시간/주파수/스펙트로그램)")
+    print("  - signal_parameters.png        (신호 제원 분석표)")
+    print("  - training_results.png         (학습 결과)")
+    print("  - confusion_matrix.png         (혼동 행렬)")
+    print("  - sigint_detector_model.pth    (학습된 모델)")
 
 if __name__ == "__main__":
     main()

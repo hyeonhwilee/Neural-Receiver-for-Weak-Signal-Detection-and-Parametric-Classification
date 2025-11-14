@@ -68,6 +68,7 @@ os.chdir('/content/Neural-Receiver-for-Weak-Signal-Detection-and-Parametric-Clas
 # 결과 표시
 from IPython.display import Image, display
 display(Image('sample_spectrograms.png'))
+display(Image('signal_parameters.png'))
 display(Image('training_results.png'))
 display(Image('confusion_matrix.png'))
 ```
@@ -98,10 +99,17 @@ Open and run `run_simulation.ipynb` in Jupyter or Google Colab.
 
 The simulation generates the following outputs:
 
-1. **sample_spectrograms.png** - Visual representation of different signal types
-2. **training_results.png** - Training and validation loss/accuracy curves
-3. **confusion_matrix.png** - Classification performance matrix
-4. **sigint_detector_model.pth** - Trained PyTorch model weights
+1. **sample_spectrograms.png** - Visual representation of different signal types (time domain, frequency spectrum, spectrogram)
+2. **signal_parameters.png** - Comprehensive signal parameter analysis table including:
+   - Center frequency and peak frequency
+   - Signal power (dBm)
+   - Bandwidth (99% and 3dB)
+   - Modulation type
+   - Signal onset time
+   - Estimated SNR
+3. **training_results.png** - Training and validation loss/accuracy curves
+4. **confusion_matrix.png** - Classification performance matrix
+5. **sigint_detector_model.pth** - Trained PyTorch model weights
 
 ## Signal Types
 
