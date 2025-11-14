@@ -43,7 +43,11 @@ pip install -r requirements.txt
 
 Open `run_simulation.ipynb` in Google Colab for a ready-to-run notebook with GPU support.
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hyeonhwilee/Neural-Receiver-for-Weak-Signal-Detection-and-Parametric-Classification/blob/main/run_simulation.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hyeonhwilee/Neural-Receiver-for-Weak-Signal-Detection-and-Parametric-Classification/blob/claude/fix-sigint-simulation-errors-01GfBwMpqJRhjxy1LkgE4GfF/run_simulation.ipynb)
+
+**참고**: 노트북 상단에서 브랜치를 선택할 수 있습니다:
+- 현재 작업 브랜치: `claude/fix-sigint-simulation-errors-01GfBwMpqJRhjxy1LkgE4GfF`
+- 메인 브랜치에 merge된 후: `main`
 
 ## Usage
 
