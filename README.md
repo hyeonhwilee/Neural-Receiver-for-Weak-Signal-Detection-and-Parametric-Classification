@@ -6,17 +6,35 @@ A Multi-Task IQ-Based Neural Receiver for Weak-Signal Detection and Parametric C
 - 약한 신호 검출 (Signal Detection)
 - 신호 파라미터 분류 (Parametric Classification)
 
-## Google Colab에서 실행하기
+## 🚀 Google Colab에서 실행하기
 
-### 방법 1: Colab 노트북 직접 열기
-1. [setup_colab.ipynb](setup_colab.ipynb) 파일을 Google Colab에서 열기
-2. 또는 아래 링크 사용:
-   ```
-   https://colab.research.google.com/github/hyeonhwilee/Neural-Receiver-for-Weak-Signal-Detection-and-Parametric-Classification/blob/main/setup_colab.ipynb
-   ```
+> **💡 더 자세한 실행 가이드는 [QUICK_START.md](QUICK_START.md)를 참고하세요!**
 
-### 방법 2: 새 Colab 노트북에서 실행
-새 Colab 노트북을 만들고 다음 명령어를 순서대로 실행하세요:
+### ⚡ 빠른 시작 (원클릭 실행)
+
+**전체 시뮬레이션을 바로 실행하려면:**
+- [run_simulation.ipynb](run_simulation.ipynb) - 전체 End-to-End 시뮬레이션
+  - 데이터 생성, 모델 학습, 평가, 시각화를 모두 포함
+  - 실행만 하면 모든 결과를 확인 가능!
+
+**환경 설정만 필요하면:**
+- [setup_colab.ipynb](setup_colab.ipynb) - 기본 환경 설정 및 예제
+
+### 방법 1: 전체 시뮬레이션 노트북 실행 (권장)
+다음 링크를 클릭하여 전체 시뮬레이션을 바로 실행하세요:
+```
+https://colab.research.google.com/github/hyeonhwilee/Neural-Receiver-for-Weak-Signal-Detection-and-Parametric-Classification/blob/main/run_simulation.ipynb
+```
+
+**포함된 내용:**
+1. ✅ 환경 자동 설정 (패키지 설치, GPU 확인)
+2. ✅ IQ 신호 데이터 생성 (다양한 변조 방식)
+3. ✅ 멀티태스크 신경망 모델 학습
+4. ✅ 성능 평가 및 시각화
+5. ✅ SNR별 성능 분석 (-20dB ~ 20dB)
+
+### 방법 2: 새 Colab 노트북에서 원클릭 코드 실행
+새 Colab 노트북을 만들고 아래 코드를 **한 번에** 실행하세요:
 
 ```python
 # 1. 저장소 클론
@@ -72,13 +90,22 @@ pip install -r requirements.txt
 - SciPy >= 1.10.0
 - 기타 (requirements.txt 참조)
 
-## 프로젝트 구조
+## 📁 프로젝트 구조
 ```
 .
-├── setup_colab.ipynb      # Colab 환경 설정 노트북
+├── run_simulation.ipynb    # 🌟 전체 시뮬레이션 노트북 (End-to-End)
+├── setup_colab.ipynb       # Colab 환경 설정 노트북
 ├── requirements.txt        # 필요한 패키지 목록
 └── README.md              # 프로젝트 설명
 ```
+
+### 노트북 설명
+- **run_simulation.ipynb**: 데이터 생성부터 학습, 평가까지 전체 과정을 포함한 완전한 시뮬레이션
+  - 약 30 에폭 학습 (GPU 사용 시 약 5-10분 소요)
+  - 신호 검출 및 변조 분류 성능 시각화
+  - SNR별 성능 분석 그래프
+
+- **setup_colab.ipynb**: 환경 설정 및 기본 예제 코드
 
 ## 기여
 이슈와 Pull Request는 언제나 환영합니다!
