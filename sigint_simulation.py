@@ -20,25 +20,53 @@ warnings.filterwarnings('ignore')
 # Set Korean font for matplotlib
 import platform
 import matplotlib.font_manager as fm
+import subprocess
+import os
+
+def install_korean_fonts():
+    """Install Korean fonts on Linux/Colab"""
+    system = platform.system()
+    if system == 'Linux':
+        try:
+            print("Installing Korean fonts...")
+            # Check if running in Colab or Linux
+            result = subprocess.run(['apt-get', 'install', '-y', '-qq', 'fonts-nanum'],
+                         check=False, capture_output=True, timeout=30)
+            if result.returncode == 0:
+                # Clear font cache
+                fm._load_fontmanager(try_read_cache=False)
+                print("✓ Korean fonts installed")
+        except Exception as e:
+            print(f"Could not install fonts: {e}")
 
 def setup_korean_font():
     """Setup Korean font for matplotlib"""
     system = platform.system()
 
     if system == 'Linux':
-        # Google Colab or Linux system
+        # Install fonts first
+        install_korean_fonts()
+
+        # Try to use NanumGothic
         try:
-            # Try to use NanumGothic (pre-installed in Colab)
             font_path = '/usr/share/fonts/truetype/nanum/NanumGothic.ttf'
             if os.path.exists(font_path):
                 font_prop = fm.FontProperties(fname=font_path)
                 plt.rcParams['font.family'] = font_prop.get_name()
+                print(f"✓ Using font: {font_prop.get_name()}")
             else:
-                # Fallback to any available Korean font
-                plt.rcParams['font.family'] = 'NanumGothic'
-        except:
-            # If no Korean font available, use sans-serif
-            plt.rcParams['font.family'] = 'sans-serif'
+                # Try to find any Nanum font
+                available_fonts = [f.name for f in fm.fontManager.ttflist]
+                nanum_fonts = [f for f in available_fonts if 'Nanum' in f]
+                if nanum_fonts:
+                    plt.rcParams['font.family'] = nanum_fonts[0]
+                    print(f"✓ Using font: {nanum_fonts[0]}")
+                else:
+                    plt.rcParams['font.family'] = 'DejaVu Sans'
+                    print("⚠ Using DejaVu Sans (Korean may not display)")
+        except Exception as e:
+            plt.rcParams['font.family'] = 'DejaVu Sans'
+            print(f"⚠ Font setup error: {e}")
     elif system == 'Darwin':  # macOS
         plt.rcParams['font.family'] = 'AppleGothic'
     elif system == 'Windows':
@@ -47,7 +75,6 @@ def setup_korean_font():
     # Prevent minus sign from being displayed as a box
     plt.rcParams['axes.unicode_minus'] = False
 
-import os
 setup_korean_font()
 
 # Set random seeds for reproducibility
@@ -162,7 +189,7 @@ def extract_signal_parameters(sig, fs=1000, signal_name='Unknown'):
 
     # Estimate noise floor (median of lower 50% power values)
     noise_floor_db = np.median(np.sort(fft_power_db)[:len(fft_power_db)//2])
-    signal_threshold_db = noise_floor_db + 10  # 10dB above noise floor
+    signal_threshold_db = noise_floor_db + 20  # 20dB above noise floor for cleaner bandwidth
 
     # Identify signal bins (above noise threshold)
     signal_mask = fft_power_db >= signal_threshold_db
