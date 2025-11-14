@@ -93,9 +93,9 @@ class SignalGenerator:
 
         return self.add_noise(fhss_signal, self.snr_db)
 
-def compute_spectrogram(signal, fs=1000, nperseg=128):
+def compute_spectrogram(sig, fs=1000, nperseg=128):
     """Compute spectrogram of signal"""
-    f, t, Sxx = signal.spectrogram(signal, fs=fs, nperseg=nperseg,
+    f, t, Sxx = signal.spectrogram(sig, fs=fs, nperseg=nperseg,
                                     noverlap=nperseg//2, mode='magnitude')
     return f, t, 20 * np.log10(Sxx + 1e-10)  # Convert to dB
 
