@@ -124,32 +124,77 @@ def extract_signal_parameters(sig, fs=1000, signal_name='Unknown'):
     fft_freq_pos = fft_freq[positive_idx]
     fft_power_pos = fft_power[positive_idx]
 
-    # 3. Center Frequency (weighted average or peak)
+    # Convert to dB for threshold calculations
+    fft_power_db = 10 * np.log10(fft_power_pos + 1e-10)
+
+    # Estimate noise floor (median of lower 50% power values)
+    noise_floor_db = np.median(np.sort(fft_power_db)[:len(fft_power_db)//2])
+    signal_threshold_db = noise_floor_db + 10  # 10dB above noise floor
+
+    # Identify signal bins (above noise threshold)
+    signal_mask = fft_power_db >= signal_threshold_db
+
+    # 3. Center Frequency and Peak Frequency
     peak_idx = np.argmax(fft_power_pos)
     params['peak_frequency'] = fft_freq_pos[peak_idx]
 
-    # Weighted center frequency
-    total_power = np.sum(fft_power_pos)
-    params['center_frequency'] = np.sum(fft_freq_pos * fft_power_pos) / total_power if total_power > 0 else 0
+    # Weighted center frequency (only from signal bins)
+    if np.any(signal_mask):
+        signal_power_sum = np.sum(fft_power_pos[signal_mask])
+        params['center_frequency'] = np.sum(fft_freq_pos[signal_mask] * fft_power_pos[signal_mask]) / signal_power_sum
+    else:
+        params['center_frequency'] = params['peak_frequency']
 
-    # 4. Bandwidth (99% power bandwidth)
-    sorted_indices = np.argsort(fft_power_pos)[::-1]
-    cumsum_power = np.cumsum(fft_power_pos[sorted_indices])
-    threshold_idx = np.where(cumsum_power >= 0.99 * total_power)[0]
-    if len(threshold_idx) > 0:
-        significant_freqs = fft_freq_pos[sorted_indices[:threshold_idx[0]+1]]
-        params['bandwidth'] = np.max(significant_freqs) - np.min(significant_freqs)
+    # 4. Bandwidth (99% power bandwidth - only from signal bins)
+    if np.any(signal_mask):
+        signal_freqs = fft_freq_pos[signal_mask]
+        signal_powers = fft_power_pos[signal_mask]
+
+        sorted_indices = np.argsort(signal_powers)[::-1]
+        cumsum_power = np.cumsum(signal_powers[sorted_indices])
+        total_signal_power = np.sum(signal_powers)
+
+        threshold_idx = np.where(cumsum_power >= 0.99 * total_signal_power)[0]
+        if len(threshold_idx) > 0:
+            significant_freqs = signal_freqs[sorted_indices[:threshold_idx[0]+1]]
+            params['bandwidth'] = np.max(significant_freqs) - np.min(significant_freqs)
+        else:
+            params['bandwidth'] = np.max(signal_freqs) - np.min(signal_freqs)
     else:
         params['bandwidth'] = 0
 
-    # 5. Occupied Bandwidth (alternative: 3dB bandwidth)
-    max_power_db = 10 * np.log10(np.max(fft_power_pos) + 1e-10)
+    # 5. Occupied Bandwidth (3dB bandwidth from peak)
+    max_power_db = np.max(fft_power_db)
     threshold_3db = max_power_db - 3
-    fft_power_db = 10 * np.log10(fft_power_pos + 1e-10)
-    above_threshold = fft_power_db >= threshold_3db
-    if np.any(above_threshold):
-        freq_above = fft_freq_pos[above_threshold]
-        params['bandwidth_3db'] = np.max(freq_above) - np.min(freq_above)
+    above_3db = fft_power_db >= threshold_3db
+
+    if np.any(above_3db):
+        # Find contiguous regions above 3dB threshold around peak
+        freq_above = fft_freq_pos[above_3db]
+
+        # Get continuous region containing peak frequency
+        peak_freq = params['peak_frequency']
+        freq_diff = np.diff(freq_above)
+
+        # If frequencies are contiguous (diff < 2*freq_resolution)
+        freq_resolution = fft_freq_pos[1] - fft_freq_pos[0]
+        gaps = np.where(freq_diff > 2 * freq_resolution)[0]
+
+        if len(gaps) > 0:
+            # Find which segment contains peak
+            segments_start = [0] + (gaps + 1).tolist()
+            segments_end = gaps.tolist() + [len(freq_above)-1]
+
+            for start, end in zip(segments_start, segments_end):
+                if freq_above[start] <= peak_freq <= freq_above[end]:
+                    params['bandwidth_3db'] = freq_above[end] - freq_above[start]
+                    break
+            else:
+                # Peak not in any segment, use full range
+                params['bandwidth_3db'] = np.max(freq_above) - np.min(freq_above)
+        else:
+            # All contiguous
+            params['bandwidth_3db'] = np.max(freq_above) - np.min(freq_above)
     else:
         params['bandwidth_3db'] = 0
 
@@ -168,8 +213,13 @@ def extract_signal_parameters(sig, fs=1000, signal_name='Unknown'):
     instantaneous_freq = np.diff(np.unwrap(np.angle(sig))) * fs / (2 * np.pi)
     freq_variation = np.std(instantaneous_freq)
 
-    # Count frequency peaks for FHSS detection
-    num_peaks = len(signal.find_peaks(fft_power_pos, height=0.1*np.max(fft_power_pos))[0])
+    # Count frequency peaks for FHSS detection (only in signal region)
+    if np.any(signal_mask):
+        signal_fft_power = fft_power_pos[signal_mask]
+        peak_threshold = 0.1 * np.max(signal_fft_power)
+        num_peaks = len(signal.find_peaks(signal_fft_power, height=peak_threshold)[0])
+    else:
+        num_peaks = 1
 
     if num_peaks > 3:
         params['modulation'] = 'FHSS'
@@ -184,10 +234,9 @@ def extract_signal_parameters(sig, fs=1000, signal_name='Unknown'):
     if signal_name != 'Unknown':
         params['modulation'] = signal_name
 
-    # 8. SNR Estimation (simple noise floor estimation)
-    noise_floor = np.median(fft_power_db)
-    signal_peak = np.max(fft_power_db)
-    params['estimated_snr'] = signal_peak - noise_floor
+    # 8. SNR Estimation (using pre-calculated noise floor)
+    signal_peak_db = np.max(fft_power_db)
+    params['estimated_snr'] = signal_peak_db - noise_floor_db
 
     return params
 
