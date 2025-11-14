@@ -17,65 +17,9 @@ from sklearn.model_selection import train_test_split
 import warnings
 warnings.filterwarnings('ignore')
 
-# Set Korean font for matplotlib
-import platform
-import matplotlib.font_manager as fm
-import subprocess
-import os
-
-def install_korean_fonts():
-    """Install Korean fonts on Linux/Colab"""
-    system = platform.system()
-    if system == 'Linux':
-        try:
-            print("Installing Korean fonts...")
-            # Check if running in Colab or Linux
-            result = subprocess.run(['apt-get', 'install', '-y', '-qq', 'fonts-nanum'],
-                         check=False, capture_output=True, timeout=30)
-            if result.returncode == 0:
-                # Clear font cache
-                fm._load_fontmanager(try_read_cache=False)
-                print("✓ Korean fonts installed")
-        except Exception as e:
-            print(f"Could not install fonts: {e}")
-
-def setup_korean_font():
-    """Setup Korean font for matplotlib"""
-    system = platform.system()
-
-    if system == 'Linux':
-        # Install fonts first
-        install_korean_fonts()
-
-        # Try to use NanumGothic
-        try:
-            font_path = '/usr/share/fonts/truetype/nanum/NanumGothic.ttf'
-            if os.path.exists(font_path):
-                font_prop = fm.FontProperties(fname=font_path)
-                plt.rcParams['font.family'] = font_prop.get_name()
-                print(f"✓ Using font: {font_prop.get_name()}")
-            else:
-                # Try to find any Nanum font
-                available_fonts = [f.name for f in fm.fontManager.ttflist]
-                nanum_fonts = [f for f in available_fonts if 'Nanum' in f]
-                if nanum_fonts:
-                    plt.rcParams['font.family'] = nanum_fonts[0]
-                    print(f"✓ Using font: {nanum_fonts[0]}")
-                else:
-                    plt.rcParams['font.family'] = 'DejaVu Sans'
-                    print("⚠ Using DejaVu Sans (Korean may not display)")
-        except Exception as e:
-            plt.rcParams['font.family'] = 'DejaVu Sans'
-            print(f"⚠ Font setup error: {e}")
-    elif system == 'Darwin':  # macOS
-        plt.rcParams['font.family'] = 'AppleGothic'
-    elif system == 'Windows':
-        plt.rcParams['font.family'] = 'Malgun Gothic'
-
-    # Prevent minus sign from being displayed as a box
-    plt.rcParams['axes.unicode_minus'] = False
-
-setup_korean_font()
+# Set matplotlib to use standard fonts (no Korean required)
+plt.rcParams['font.family'] = 'DejaVu Sans'
+plt.rcParams['axes.unicode_minus'] = False
 
 # Set random seeds for reproducibility
 np.random.seed(42)
@@ -503,7 +447,7 @@ def plot_sample_spectrograms():
 
     # Extract parameters for all signals
     print("\n" + "="*70)
-    print("📊 신호 제원 분석 (Signal Parameter Analysis)")
+    print("Signal Parameter Analysis")
     print("="*70)
 
     all_params = {}
@@ -580,14 +524,14 @@ def create_parameter_table(all_params):
     ax.axis('off')
 
     # Prepare table data
-    headers = ['신호 타입\n(Signal Type)',
-               '중심주파수\n(Fc) [Hz]',
-               '신호세기\n(Power) [dBm]',
-               '대역폭 (99%)\n(BW) [Hz]',
-               '대역폭 (3dB)\n(BW) [Hz]',
-               '변조방식\n(Modulation)',
-               '출현시점\n(Onset) [s]',
-               '추정 SNR\n[dB]']
+    headers = ['Signal\nType',
+               'Center Freq\n(Fc) [Hz]',
+               'Power\n[dBm]',
+               'Bandwidth\n(99%) [Hz]',
+               'Bandwidth\n(3dB) [Hz]',
+               'Modulation\nType',
+               'Onset\nTime [s]',
+               'Estimated\nSNR [dB]']
 
     table_data = []
     for name, params in all_params.items():
@@ -627,7 +571,7 @@ def create_parameter_table(all_params):
             else:
                 cell.set_facecolor('white')
 
-    plt.title('신호 제원 분석표 (Signal Parameter Summary)',
+    plt.title('Signal Parameter Summary',
              fontsize=14, fontweight='bold', pad=20)
     plt.savefig('signal_parameters.png', dpi=150, bbox_inches='tight')
     plt.close()
@@ -742,11 +686,11 @@ def main():
     print("✅ Simulation Complete!")
     print("="*70)
     print("\nGenerated files:")
-    print("  - sample_spectrograms.png      (신호 시각화: 시간/주파수/스펙트로그램)")
-    print("  - signal_parameters.png        (신호 제원 분석표)")
-    print("  - training_results.png         (학습 결과)")
-    print("  - confusion_matrix.png         (혼동 행렬)")
-    print("  - sigint_detector_model.pth    (학습된 모델)")
+    print("  - sample_spectrograms.png      (Signal visualization: time/freq/spectrogram)")
+    print("  - signal_parameters.png        (Signal parameter analysis table)")
+    print("  - training_results.png         (Training results)")
+    print("  - confusion_matrix.png         (Confusion matrix)")
+    print("  - sigint_detector_model.pth    (Trained model)")
 
 if __name__ == "__main__":
     main()
