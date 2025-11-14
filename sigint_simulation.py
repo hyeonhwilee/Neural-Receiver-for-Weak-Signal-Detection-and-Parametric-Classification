@@ -275,7 +275,7 @@ def train_model(model, train_loader, val_loader, num_epochs=20):
 # ==================== Visualization ====================
 
 def plot_sample_spectrograms():
-    """Generate and plot sample spectrograms"""
+    """Generate and plot sample spectrograms with time and frequency domain analysis"""
     gen = SignalGenerator(snr_db=-5)
 
     signals = {
@@ -285,17 +285,44 @@ def plot_sample_spectrograms():
         'FHSS': gen.generate_fhss()
     }
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-    axes = axes.ravel()
+    # Create figure with 4 rows (signals) x 3 columns (time, freq, spectrogram)
+    fig = plt.figure(figsize=(18, 16))
 
     for idx, (name, sig) in enumerate(signals.items()):
-        f, t, Sxx = compute_spectrogram(sig)
+        # Time domain plot (I/Q components)
+        ax1 = plt.subplot(4, 3, idx*3 + 1)
+        time_axis = np.linspace(0, gen.duration, len(sig))
+        ax1.plot(time_axis[:500], np.real(sig[:500]), 'b-', linewidth=0.8, label='I (Real)', alpha=0.7)
+        ax1.plot(time_axis[:500], np.imag(sig[:500]), 'r-', linewidth=0.8, label='Q (Imag)', alpha=0.7)
+        ax1.set_xlabel('Time [s]')
+        ax1.set_ylabel('Amplitude')
+        ax1.set_title(f'{name} - Time Domain')
+        ax1.legend(loc='upper right', fontsize=8)
+        ax1.grid(True, alpha=0.3)
 
-        im = axes[idx].pcolormesh(t, f, Sxx, shading='gouraud', cmap='jet')
-        axes[idx].set_ylabel('Frequency [Hz]')
-        axes[idx].set_xlabel('Time [s]')
-        axes[idx].set_title(f'{name} Signal Spectrogram')
-        plt.colorbar(im, ax=axes[idx], label='Magnitude [dB]')
+        # Frequency spectrum (FFT)
+        ax2 = plt.subplot(4, 3, idx*3 + 2)
+        fft_result = np.fft.fft(sig)
+        fft_freq = np.fft.fftfreq(len(sig), 1/gen.fs)
+        fft_magnitude = 20 * np.log10(np.abs(fft_result) + 1e-10)
+
+        # Plot only positive frequencies
+        positive_freq_idx = fft_freq >= 0
+        ax2.plot(fft_freq[positive_freq_idx], fft_magnitude[positive_freq_idx], 'g-', linewidth=1.0)
+        ax2.set_xlabel('Frequency [Hz]')
+        ax2.set_ylabel('Magnitude [dB]')
+        ax2.set_title(f'{name} - Frequency Spectrum')
+        ax2.grid(True, alpha=0.3)
+        ax2.set_xlim([0, gen.fs/2])
+
+        # Spectrogram
+        ax3 = plt.subplot(4, 3, idx*3 + 3)
+        f, t, Sxx = compute_spectrogram(sig)
+        im = ax3.pcolormesh(t, f, Sxx, shading='gouraud', cmap='jet')
+        ax3.set_ylabel('Frequency [Hz]')
+        ax3.set_xlabel('Time [s]')
+        ax3.set_title(f'{name} - Spectrogram')
+        plt.colorbar(im, ax=ax3, label='Magnitude [dB]')
 
     plt.tight_layout()
     plt.savefig('sample_spectrograms.png', dpi=150, bbox_inches='tight')
