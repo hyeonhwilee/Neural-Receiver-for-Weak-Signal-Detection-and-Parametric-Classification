@@ -17,6 +17,39 @@ from sklearn.model_selection import train_test_split
 import warnings
 warnings.filterwarnings('ignore')
 
+# Set Korean font for matplotlib
+import platform
+import matplotlib.font_manager as fm
+
+def setup_korean_font():
+    """Setup Korean font for matplotlib"""
+    system = platform.system()
+
+    if system == 'Linux':
+        # Google Colab or Linux system
+        try:
+            # Try to use NanumGothic (pre-installed in Colab)
+            font_path = '/usr/share/fonts/truetype/nanum/NanumGothic.ttf'
+            if os.path.exists(font_path):
+                font_prop = fm.FontProperties(fname=font_path)
+                plt.rcParams['font.family'] = font_prop.get_name()
+            else:
+                # Fallback to any available Korean font
+                plt.rcParams['font.family'] = 'NanumGothic'
+        except:
+            # If no Korean font available, use sans-serif
+            plt.rcParams['font.family'] = 'sans-serif'
+    elif system == 'Darwin':  # macOS
+        plt.rcParams['font.family'] = 'AppleGothic'
+    elif system == 'Windows':
+        plt.rcParams['font.family'] = 'Malgun Gothic'
+
+    # Prevent minus sign from being displayed as a box
+    plt.rcParams['axes.unicode_minus'] = False
+
+import os
+setup_korean_font()
+
 # Set random seeds for reproducibility
 np.random.seed(42)
 torch.manual_seed(42)
