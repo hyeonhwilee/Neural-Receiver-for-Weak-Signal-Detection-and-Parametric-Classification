@@ -1,0 +1,53 @@
+# Default configuration for Neural Receiver training
+
+# Model configuration
+model:
+  input_channels: 2  # IQ data has 2 channels (I and Q)
+  base_channels: 64
+  num_blocks: 4
+  num_classes: 12  # Number of modulation types
+  dropout: 0.2
+
+# Training configuration
+training:
+  num_epochs: 100
+  batch_size: 32
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  min_lr: 0.000001
+  use_scheduler: true
+
+  # Multi-task loss weights
+  detection_weight: 1.0
+  regression_weight: 1.0
+  classification_weight: 1.0
+  use_uncertainty_weighting: false
+
+  # Device and performance
+  device: cuda  # 'cuda' or 'cpu'
+  num_workers: 4
+
+  # Output
+  output_dir: experiments
+  experiment_name: neural_receiver_default
+  use_tensorboard: true
+
+# Data configuration
+data:
+  sequence_length: 1024
+  train_samples: 20000
+  val_samples: 4000
+  test_samples: 2000
+
+  # Signal parameters
+  snr_range: [-10, 0]  # SNR range in dB for weak signals
+  no_signal_prob: 0.2  # Probability of no-signal samples
+
+  # Dataset options
+  pregenerate: false  # Set to true for faster training but more memory
+  seed: 42
+
+# Evaluation configuration
+evaluation:
+  batch_size: 64
+  detection_threshold: 0.5
