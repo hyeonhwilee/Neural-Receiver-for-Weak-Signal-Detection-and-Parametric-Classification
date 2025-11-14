@@ -55,9 +55,10 @@ class SignalGenerator:
         return self.add_noise(signal, self.snr_db)
 
     def generate_chirp(self, f0=50, f1=200):
-        """Generate chirp signal"""
-        chirp_sig = signal.chirp(self.t, f0, self.duration, f1, method='linear')
-        complex_signal = chirp_sig * np.exp(1j * 2 * np.pi * f0 * self.t)
+        """Generate chirp signal (linear FM sweep)"""
+        # Generate instantaneous frequency sweep
+        instantaneous_phase = 2 * np.pi * (f0 * self.t + (f1 - f0) / (2 * self.duration) * self.t**2)
+        complex_signal = np.exp(1j * instantaneous_phase)
         return self.add_noise(complex_signal, self.snr_db)
 
     def generate_fsk(self, freqs=[80, 120], symbol_rate=50):
@@ -133,14 +134,15 @@ def extract_signal_parameters(sig, fs=1000, signal_name='Unknown'):
 
     # Estimate noise floor (median of lower 50% power values)
     noise_floor_db = np.median(np.sort(fft_power_db)[:len(fft_power_db)//2])
-    signal_threshold_db = noise_floor_db + 20  # 20dB above noise floor for cleaner bandwidth
-
-    # Identify signal bins (above noise threshold)
-    signal_mask = fft_power_db >= signal_threshold_db
 
     # 3. Center Frequency and Peak Frequency
     peak_idx = np.argmax(fft_power_pos)
     params['peak_frequency'] = fft_freq_pos[peak_idx]
+    max_power_db = fft_power_db[peak_idx]
+
+    # More robust signal threshold: 10dB below peak, but at least 15dB above noise floor
+    signal_threshold_db = max(max_power_db - 10, noise_floor_db + 15)
+    signal_mask = fft_power_db >= signal_threshold_db
 
     # Weighted center frequency (only from signal bins)
     if np.any(signal_mask):
@@ -149,58 +151,67 @@ def extract_signal_parameters(sig, fs=1000, signal_name='Unknown'):
     else:
         params['center_frequency'] = params['peak_frequency']
 
-    # 4. Bandwidth (99% power bandwidth - only from signal bins)
-    if np.any(signal_mask):
-        signal_freqs = fft_freq_pos[signal_mask]
-        signal_powers = fft_power_pos[signal_mask]
+    # 4. Bandwidth calculations using multiple methods
+    freq_resolution = fft_freq_pos[1] - fft_freq_pos[0]
 
-        sorted_indices = np.argsort(signal_powers)[::-1]
-        cumsum_power = np.cumsum(signal_powers[sorted_indices])
-        total_signal_power = np.sum(signal_powers)
-
-        threshold_idx = np.where(cumsum_power >= 0.99 * total_signal_power)[0]
-        if len(threshold_idx) > 0:
-            significant_freqs = signal_freqs[sorted_indices[:threshold_idx[0]+1]]
-            params['bandwidth'] = np.max(significant_freqs) - np.min(significant_freqs)
-        else:
-            params['bandwidth'] = np.max(signal_freqs) - np.min(signal_freqs)
-    else:
-        params['bandwidth'] = 0
-
-    # 5. Occupied Bandwidth (3dB bandwidth from peak)
-    max_power_db = np.max(fft_power_db)
+    # Method 1: 3dB Bandwidth (half-power bandwidth)
     threshold_3db = max_power_db - 3
-    above_3db = fft_power_db >= threshold_3db
+    above_3db_mask = fft_power_db >= threshold_3db
 
-    if np.any(above_3db):
-        # Find contiguous regions above 3dB threshold around peak
-        freq_above = fft_freq_pos[above_3db]
+    if np.any(above_3db_mask):
+        # Find indices above 3dB threshold
+        indices_3db = np.where(above_3db_mask)[0]
 
-        # Get continuous region containing peak frequency
-        peak_freq = params['peak_frequency']
-        freq_diff = np.diff(freq_above)
+        # Find largest contiguous region containing peak
+        peak_in_region = False
+        max_region_size = 0
+        best_region = (indices_3db[0], indices_3db[0])
 
-        # If frequencies are contiguous (diff < 2*freq_resolution)
-        freq_resolution = fft_freq_pos[1] - fft_freq_pos[0]
-        gaps = np.where(freq_diff > 2 * freq_resolution)[0]
+        # Split into contiguous regions
+        region_starts = [indices_3db[0]]
+        for i in range(1, len(indices_3db)):
+            if indices_3db[i] - indices_3db[i-1] > 1:  # Gap detected
+                region_starts.append(indices_3db[i])
 
-        if len(gaps) > 0:
-            # Find which segment contains peak
-            segments_start = [0] + (gaps + 1).tolist()
-            segments_end = gaps.tolist() + [len(freq_above)-1]
-
-            for start, end in zip(segments_start, segments_end):
-                if freq_above[start] <= peak_freq <= freq_above[end]:
-                    params['bandwidth_3db'] = freq_above[end] - freq_above[start]
-                    break
+        # Find region containing peak
+        for i, start_idx in enumerate(region_starts):
+            if i < len(region_starts) - 1:
+                end_idx = region_starts[i+1] - 1
+                region_indices = indices_3db[(indices_3db >= start_idx) & (indices_3db < region_starts[i+1])]
             else:
-                # Peak not in any segment, use full range
-                params['bandwidth_3db'] = np.max(freq_above) - np.min(freq_above)
+                region_indices = indices_3db[indices_3db >= start_idx]
+
+            if peak_idx in region_indices:
+                best_region = (region_indices[0], region_indices[-1])
+                peak_in_region = True
+                break
+
+        if peak_in_region:
+            params['bandwidth_3db'] = fft_freq_pos[best_region[1]] - fft_freq_pos[best_region[0]]
         else:
-            # All contiguous
-            params['bandwidth_3db'] = np.max(freq_above) - np.min(freq_above)
+            params['bandwidth_3db'] = fft_freq_pos[indices_3db[-1]] - fft_freq_pos[indices_3db[0]]
     else:
-        params['bandwidth_3db'] = 0
+        params['bandwidth_3db'] = freq_resolution
+
+    # Method 2: 99% Power Bandwidth (using cumulative power in signal region only)
+    if np.any(signal_mask):
+        signal_indices = np.where(signal_mask)[0]
+        signal_freqs = fft_freq_pos[signal_indices]
+        signal_powers = fft_power_pos[signal_indices]
+
+        # Sort by power
+        sorted_power_indices = np.argsort(signal_powers)[::-1]
+        cumsum_power = np.cumsum(signal_powers[sorted_power_indices])
+        total_signal_power = cumsum_power[-1]
+
+        # Find frequencies that contain 99% of power
+        power_99_idx = np.searchsorted(cumsum_power, 0.99 * total_signal_power)
+        significant_freq_indices = sorted_power_indices[:power_99_idx+1]
+        significant_freqs = signal_freqs[significant_freq_indices]
+
+        params['bandwidth'] = np.max(significant_freqs) - np.min(significant_freqs)
+    else:
+        params['bandwidth'] = freq_resolution
 
     # 6. Signal Onset Detection (energy-based)
     window_size = int(0.01 * fs)  # 10ms window
@@ -445,6 +456,34 @@ def plot_sample_spectrograms():
         'FHSS': gen.generate_fhss()
     }
 
+    # Define ground truth parameters for comparison
+    ground_truth = {
+        'Sine': {
+            'center_frequency': 100.0,
+            'bandwidth': 0.0,
+            'bandwidth_3db': 0.0,
+            'modulation': 'Sine'
+        },
+        'Chirp': {
+            'center_frequency': 125.0,  # (50 + 200) / 2
+            'bandwidth': 150.0,  # 200 - 50
+            'bandwidth_3db': 150.0,
+            'modulation': 'Chirp'
+        },
+        'FSK': {
+            'center_frequency': 100.0,  # (80 + 120) / 2
+            'bandwidth': 40.0,  # 120 - 80
+            'bandwidth_3db': 40.0,
+            'modulation': 'FSK'
+        },
+        'FHSS': {
+            'center_frequency': 120.0,  # (60 + 100 + 140 + 180) / 4
+            'bandwidth': 120.0,  # 180 - 60
+            'bandwidth_3db': 120.0,
+            'modulation': 'FHSS'
+        }
+    }
+
     # Extract parameters for all signals
     print("\n" + "="*70)
     print("Signal Parameter Analysis")
@@ -514,26 +553,28 @@ def plot_sample_spectrograms():
     plt.close()
     print("\n✓ Saved sample_spectrograms.png")
 
-    # Create parameter summary table
-    create_parameter_table(all_params)
+    # Create parameter summary table with ground truth comparison
+    create_parameter_table(all_params, ground_truth)
 
-def create_parameter_table(all_params):
-    """Create a visual table of signal parameters"""
-    fig, ax = plt.subplots(figsize=(14, 6))
-    ax.axis('tight')
-    ax.axis('off')
+def create_parameter_table(all_params, ground_truth):
+    """Create a visual table comparing extracted vs ground truth parameters"""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 10))
+    ax1.axis('tight')
+    ax1.axis('off')
+    ax2.axis('tight')
+    ax2.axis('off')
 
-    # Prepare table data
-    headers = ['Signal\nType',
-               'Center Freq\n(Fc) [Hz]',
-               'Power\n[dBm]',
-               'Bandwidth\n(99%) [Hz]',
-               'Bandwidth\n(3dB) [Hz]',
-               'Modulation\nType',
-               'Onset\nTime [s]',
-               'Estimated\nSNR [dB]']
+    # Table 1: Extracted Parameters
+    headers1 = ['Signal\nType',
+                'Center Freq\n(Fc) [Hz]',
+                'Power\n[dBm]',
+                'Bandwidth\n(99%) [Hz]',
+                'Bandwidth\n(3dB) [Hz]',
+                'Modulation\nType',
+                'Onset\nTime [s]',
+                'Estimated\nSNR [dB]']
 
-    table_data = []
+    table_data1 = []
     for name, params in all_params.items():
         row = [
             name,
@@ -545,34 +586,125 @@ def create_parameter_table(all_params):
             f"{params['onset_time']:.4f}",
             f"{params['estimated_snr']:.1f}"
         ]
-        table_data.append(row)
+        table_data1.append(row)
 
-    # Create table
-    table = ax.table(cellText=table_data, colLabels=headers,
-                     cellLoc='center', loc='center',
-                     colWidths=[0.12, 0.12, 0.12, 0.13, 0.13, 0.13, 0.12, 0.13])
+    # Create extracted parameters table
+    table1 = ax1.table(cellText=table_data1, colLabels=headers1,
+                       cellLoc='center', loc='center',
+                       colWidths=[0.12, 0.13, 0.12, 0.14, 0.14, 0.13, 0.11, 0.11])
 
-    table.auto_set_font_size(False)
-    table.set_fontsize(10)
-    table.scale(1, 2.5)
+    table1.auto_set_font_size(False)
+    table1.set_fontsize(9)
+    table1.scale(1, 2.2)
 
-    # Style the header
-    for i in range(len(headers)):
-        cell = table[(0, i)]
+    # Style the header for table 1
+    for i in range(len(headers1)):
+        cell = table1[(0, i)]
         cell.set_facecolor('#4CAF50')
         cell.set_text_props(weight='bold', color='white')
 
-    # Alternate row colors
-    for i in range(1, len(table_data) + 1):
-        for j in range(len(headers)):
-            cell = table[(i, j)]
+    # Alternate row colors for table 1
+    for i in range(1, len(table_data1) + 1):
+        for j in range(len(headers1)):
+            cell = table1[(i, j)]
             if i % 2 == 0:
                 cell.set_facecolor('#f0f0f0')
             else:
                 cell.set_facecolor('white')
 
-    plt.title('Signal Parameter Summary',
-             fontsize=14, fontweight='bold', pad=20)
+    ax1.set_title('Extracted Signal Parameters', fontsize=12, fontweight='bold', pad=10)
+
+    # Table 2: Ground Truth vs Extracted Comparison
+    headers2 = ['Signal\nType',
+                'Parameter',
+                'Ground Truth\n[Hz]',
+                'Extracted\n[Hz]',
+                'Error\n[Hz]',
+                'Error\n[%]']
+
+    table_data2 = []
+    for name in all_params.keys():
+        gt = ground_truth[name]
+        ex = all_params[name]
+
+        # Center Frequency comparison
+        fc_error = ex['center_frequency'] - gt['center_frequency']
+        fc_error_pct = (fc_error / gt['center_frequency'] * 100) if gt['center_frequency'] != 0 else 0
+        table_data2.append([
+            name,
+            'Center Freq',
+            f"{gt['center_frequency']:.1f}",
+            f"{ex['center_frequency']:.1f}",
+            f"{fc_error:+.1f}",
+            f"{fc_error_pct:+.1f}"
+        ])
+
+        # 99% Bandwidth comparison
+        bw_error = ex['bandwidth'] - gt['bandwidth']
+        bw_error_pct = (bw_error / gt['bandwidth'] * 100) if gt['bandwidth'] != 0 else 0
+        table_data2.append([
+            '',
+            'BW (99%)',
+            f"{gt['bandwidth']:.1f}",
+            f"{ex['bandwidth']:.1f}",
+            f"{bw_error:+.1f}",
+            f"{bw_error_pct:+.1f}" if gt['bandwidth'] != 0 else 'N/A'
+        ])
+
+        # 3dB Bandwidth comparison
+        bw3_error = ex['bandwidth_3db'] - gt['bandwidth_3db']
+        bw3_error_pct = (bw3_error / gt['bandwidth_3db'] * 100) if gt['bandwidth_3db'] != 0 else 0
+        table_data2.append([
+            '',
+            'BW (3dB)',
+            f"{gt['bandwidth_3db']:.1f}",
+            f"{ex['bandwidth_3db']:.1f}",
+            f"{bw3_error:+.1f}",
+            f"{bw3_error_pct:+.1f}" if gt['bandwidth_3db'] != 0 else 'N/A'
+        ])
+
+    # Create comparison table
+    table2 = ax2.table(cellText=table_data2, colLabels=headers2,
+                       cellLoc='center', loc='center',
+                       colWidths=[0.15, 0.18, 0.18, 0.18, 0.15, 0.16])
+
+    table2.auto_set_font_size(False)
+    table2.set_fontsize(9)
+    table2.scale(1, 1.8)
+
+    # Style the header for table 2
+    for i in range(len(headers2)):
+        cell = table2[(0, i)]
+        cell.set_facecolor('#2196F3')
+        cell.set_text_props(weight='bold', color='white')
+
+    # Color code rows based on signal type and error magnitude
+    signal_colors = {'Sine': '#E8F5E9', 'Chirp': '#FFF3E0', 'FSK': '#E3F2FD', 'FHSS': '#F3E5F5'}
+    current_signal = None
+    for i in range(1, len(table_data2) + 1):
+        # Check if this is a new signal (first column not empty)
+        if table_data2[i-1][0] != '':
+            current_signal = table_data2[i-1][0]
+
+        for j in range(len(headers2)):
+            cell = table2[(i, j)]
+            if current_signal:
+                cell.set_facecolor(signal_colors.get(current_signal, 'white'))
+
+            # Highlight large errors in red
+            if j == 5 and table_data2[i-1][5] not in ['N/A', '']:  # Error % column
+                try:
+                    error_pct = float(table_data2[i-1][5])
+                    if abs(error_pct) > 20:  # More than 20% error
+                        cell.set_text_props(weight='bold', color='red')
+                except:
+                    pass
+
+    ax2.set_title('Ground Truth vs Extracted Parameters Comparison',
+                  fontsize=12, fontweight='bold', pad=10)
+
+    plt.suptitle('Signal Parameter Analysis Summary', fontsize=14, fontweight='bold', y=0.98)
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
     plt.savefig('signal_parameters.png', dpi=150, bbox_inches='tight')
     plt.close()
     print("✓ Saved signal_parameters.png")
