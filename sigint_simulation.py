@@ -80,8 +80,9 @@ class SignalGenerator:
 
         return self.add_noise(fsk_signal, self.snr_db)
 
-    def generate_fhss(self, freq_set=[60, 100, 140, 180], hop_rate=100):
+    def generate_fhss(self, freq_set=[60, 100, 140, 180], hop_rate=20):
         """Generate FHSS (Frequency Hopping Spread Spectrum) signal"""
+        # Lower hop rate (20 Hz) = longer hop duration (0.05s) for better visibility
         samples_per_hop = int(self.fs / hop_rate)
         n_hops = int(len(self.t) / samples_per_hop)
 
@@ -98,8 +99,9 @@ class SignalGenerator:
 
         return self.add_noise(fhss_signal, self.snr_db)
 
-def compute_spectrogram(sig, fs=1000, nperseg=128):
-    """Compute spectrogram of signal"""
+def compute_spectrogram(sig, fs=1000, nperseg=64):
+    """Compute spectrogram of signal with better time resolution"""
+    # Reduced nperseg from 128 to 64 for better time resolution (0.064s window)
     f, t, Sxx = signal.spectrogram(sig, fs=fs, nperseg=nperseg,
                                     noverlap=nperseg//2, mode='magnitude')
     return f, t, 20 * np.log10(Sxx + 1e-10)  # Convert to dB
@@ -273,15 +275,24 @@ def print_signal_parameters(params, signal_name):
 # ==================== Dataset ====================
 
 class SIGINTDataset(Dataset):
-    """Dataset for SIGINT signal classification"""
+    """Multi-task dataset for SIGINT signal classification and parameter estimation"""
 
     def __init__(self, n_samples=1000, snr_range=(-15, 5)):
         self.n_samples = n_samples
         self.data = []
         self.labels = []
+        self.parameters = []  # Store ground truth parameters
         self.signal_types = ['Sine', 'Chirp', 'FSK', 'FHSS']
 
-        print("Generating dataset...")
+        # Ground truth parameters for each signal type
+        self.gt_params = {
+            0: {'fc': 100.0, 'bw': 0.0},      # Sine
+            1: {'fc': 125.0, 'bw': 150.0},    # Chirp
+            2: {'fc': 100.0, 'bw': 40.0},     # FSK
+            3: {'fc': 120.0, 'bw': 120.0}     # FHSS
+        }
+
+        print("Generating dataset with ground truth parameters...")
         for i in range(n_samples):
             # Random SNR for each sample
             snr = np.random.uniform(*snr_range)
@@ -305,8 +316,19 @@ class SIGINTDataset(Dataset):
             # Resize to fixed size
             Sxx_resized = self._resize_spectrogram(Sxx, (64, 64))
 
+            # Calculate actual signal power
+            signal_power = np.mean(np.abs(sig)**2)
+            power_dbm = 10 * np.log10(signal_power * 1000 + 1e-10)
+
+            # Store data, label, and ground truth parameters
             self.data.append(Sxx_resized)
             self.labels.append(signal_type)
+            self.parameters.append({
+                'center_freq': self.gt_params[signal_type]['fc'],
+                'bandwidth': self.gt_params[signal_type]['bw'],
+                'power_dbm': power_dbm,
+                'snr_db': snr
+            })
 
             if (i + 1) % 200 == 0:
                 print(f"  Generated {i + 1}/{n_samples} samples")
@@ -326,17 +348,28 @@ class SIGINTDataset(Dataset):
 
     def __getitem__(self, idx):
         x = torch.FloatTensor(self.data[idx]).unsqueeze(0)  # Add channel dimension
-        y = torch.LongTensor([self.labels[idx]])[0]
-        return x, y
+        y_class = torch.LongTensor([self.labels[idx]])[0]
+
+        # Ground truth parameters as regression targets
+        params = self.parameters[idx]
+        y_params = torch.FloatTensor([
+            params['center_freq'] / 200.0,  # Normalize to [0, 1] range (max 200 Hz)
+            params['bandwidth'] / 200.0,     # Normalize to [0, 1] range
+            (params['power_dbm'] + 50) / 100.0,  # Normalize: [-50, 50] dBm -> [0, 1]
+            (params['snr_db'] + 15) / 20.0    # Normalize: [-15, 5] dB -> [0, 1]
+        ])
+
+        return x, y_class, y_params
 
 # ==================== Neural Network Model ====================
 
 class SIGINTClassifier(nn.Module):
-    """CNN-based SIGINT signal classifier"""
+    """Multi-task CNN for SIGINT signal classification and parameter estimation"""
 
     def __init__(self, num_classes=4):
         super(SIGINTClassifier, self).__init__()
 
+        # Shared feature extractor
         self.features = nn.Sequential(
             # Conv Block 1
             nn.Conv2d(1, 32, kernel_size=3, padding=1),
@@ -357,96 +390,149 @@ class SIGINTClassifier(nn.Module):
             nn.MaxPool2d(2, 2),
         )
 
-        self.classifier = nn.Sequential(
+        # Shared fully connected layers
+        self.shared_fc = nn.Sequential(
             nn.Dropout(0.5),
             nn.Linear(128 * 8 * 8, 256),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.5),
-            nn.Linear(256, num_classes)
+            nn.Dropout(0.3)
+        )
+
+        # Classification head
+        self.classifier = nn.Linear(256, num_classes)
+
+        # Parameter estimation head (4 outputs: fc, bw, power, snr)
+        self.param_estimator = nn.Sequential(
+            nn.Linear(256, 128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2),
+            nn.Linear(128, 4),
+            nn.Sigmoid()  # Output in [0, 1] range (normalized)
         )
 
     def forward(self, x):
+        # Shared feature extraction
         x = self.features(x)
         x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        return x
+        x = self.shared_fc(x)
+
+        # Task-specific heads
+        class_output = self.classifier(x)
+        param_output = self.param_estimator(x)
+
+        return class_output, param_output
 
 # ==================== Training ====================
 
 def train_model(model, train_loader, val_loader, num_epochs=20):
-    """Train the SIGINT classifier"""
-    criterion = nn.CrossEntropyLoss()
+    """Train the multi-task SIGINT classifier"""
+    # Loss functions
+    criterion_class = nn.CrossEntropyLoss()
+    criterion_params = nn.MSELoss()
+
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3)
 
     history = {
-        'train_loss': [], 'train_acc': [],
-        'val_loss': [], 'val_acc': []
+        'train_loss': [], 'train_acc': [], 'train_param_loss': [],
+        'val_loss': [], 'val_acc': [], 'val_param_loss': []
     }
 
-    print("\nTraining model...")
+    print("\nTraining multi-task model...")
     for epoch in range(num_epochs):
         # Training
         model.train()
         train_loss = 0
+        train_class_loss = 0
+        train_param_loss = 0
         train_correct = 0
         train_total = 0
 
-        for inputs, labels in train_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
+        for inputs, labels, params in train_loader:
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+            params = params.to(device)
 
             optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
+
+            # Forward pass
+            class_outputs, param_outputs = model(inputs)
+
+            # Multi-task loss
+            loss_class = criterion_class(class_outputs, labels)
+            loss_params = criterion_params(param_outputs, params)
+            loss = loss_class + 0.5 * loss_params  # Weight parameter loss
+
             loss.backward()
             optimizer.step()
 
             train_loss += loss.item()
-            _, predicted = outputs.max(1)
+            train_class_loss += loss_class.item()
+            train_param_loss += loss_params.item()
+
+            _, predicted = class_outputs.max(1)
             train_total += labels.size(0)
             train_correct += predicted.eq(labels).sum().item()
 
         train_loss = train_loss / len(train_loader)
+        train_class_loss = train_class_loss / len(train_loader)
+        train_param_loss = train_param_loss / len(train_loader)
         train_acc = 100. * train_correct / train_total
 
         # Validation
         model.eval()
         val_loss = 0
+        val_class_loss = 0
+        val_param_loss = 0
         val_correct = 0
         val_total = 0
 
         with torch.no_grad():
-            for inputs, labels in val_loader:
-                inputs, labels = inputs.to(device), labels.to(device)
-                outputs = model(inputs)
-                loss = criterion(outputs, labels)
+            for inputs, labels, params in val_loader:
+                inputs = inputs.to(device)
+                labels = labels.to(device)
+                params = params.to(device)
+
+                class_outputs, param_outputs = model(inputs)
+
+                loss_class = criterion_class(class_outputs, labels)
+                loss_params = criterion_params(param_outputs, params)
+                loss = loss_class + 0.5 * loss_params
 
                 val_loss += loss.item()
-                _, predicted = outputs.max(1)
+                val_class_loss += loss_class.item()
+                val_param_loss += loss_params.item()
+
+                _, predicted = class_outputs.max(1)
                 val_total += labels.size(0)
                 val_correct += predicted.eq(labels).sum().item()
 
         val_loss = val_loss / len(val_loader)
+        val_class_loss = val_class_loss / len(val_loader)
+        val_param_loss = val_param_loss / len(val_loader)
         val_acc = 100. * val_correct / val_total
 
         history['train_loss'].append(train_loss)
         history['train_acc'].append(train_acc)
+        history['train_param_loss'].append(train_param_loss)
         history['val_loss'].append(val_loss)
         history['val_acc'].append(val_acc)
+        history['val_param_loss'].append(val_param_loss)
 
         scheduler.step(val_loss)
 
         if (epoch + 1) % 5 == 0:
             print(f"Epoch [{epoch+1}/{num_epochs}] "
-                  f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}% | "
-                  f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
+                  f"Train Loss: {train_loss:.4f} (Class: {train_class_loss:.4f}, Param: {train_param_loss:.4f}), "
+                  f"Acc: {train_acc:.2f}% | "
+                  f"Val Loss: {val_loss:.4f}, Acc: {val_acc:.2f}%")
 
     return history
 
 # ==================== Visualization ====================
 
-def plot_sample_spectrograms():
-    """Generate and plot sample spectrograms with time and frequency domain analysis"""
+def plot_sample_spectrograms(model):
+    """Generate and plot sample spectrograms with AI-based parameter estimation"""
     gen = SignalGenerator(snr_db=5)  # Higher SNR for accurate parameter extraction
 
     signals = {
@@ -456,44 +542,84 @@ def plot_sample_spectrograms():
         'FHSS': gen.generate_fhss()
     }
 
+    signal_types = ['Sine', 'Chirp', 'FSK', 'FHSS']
+
     # Define ground truth parameters for comparison
     ground_truth = {
         'Sine': {
             'center_frequency': 100.0,
             'bandwidth': 0.0,
-            'bandwidth_3db': 0.0,
             'modulation': 'Sine'
         },
         'Chirp': {
             'center_frequency': 125.0,  # (50 + 200) / 2
             'bandwidth': 150.0,  # 200 - 50
-            'bandwidth_3db': 150.0,
             'modulation': 'Chirp'
         },
         'FSK': {
             'center_frequency': 100.0,  # (80 + 120) / 2
             'bandwidth': 40.0,  # 120 - 80
-            'bandwidth_3db': 40.0,
             'modulation': 'FSK'
         },
         'FHSS': {
             'center_frequency': 120.0,  # (60 + 100 + 140 + 180) / 4
             'bandwidth': 120.0,  # 180 - 60
-            'bandwidth_3db': 120.0,
             'modulation': 'FHSS'
         }
     }
 
-    # Extract parameters for all signals
+    # Use AI model to estimate parameters
     print("\n" + "="*70)
-    print("Signal Parameter Analysis")
+    print("AI-Based Signal Parameter Analysis")
     print("="*70)
 
+    model.eval()
     all_params = {}
-    for name, sig in signals.items():
-        params = extract_signal_parameters(sig, gen.fs, name)
-        all_params[name] = params
-        print_signal_parameters(params, name)
+
+    with torch.no_grad():
+        for idx, (name, sig) in enumerate(signals.items()):
+            # Compute spectrogram
+            _, _, Sxx = compute_spectrogram(sig)
+
+            # Resize to model input size
+            from scipy.ndimage import zoom
+            zoom_factors = (64 / Sxx.shape[0], 64 / Sxx.shape[1])
+            Sxx_resized = zoom(Sxx, zoom_factors, order=1)
+
+            # Prepare input tensor
+            x = torch.FloatTensor(Sxx_resized).unsqueeze(0).unsqueeze(0).to(device)
+
+            # Get AI prediction
+            class_output, param_output = model(x)
+
+            # Get predicted class
+            _, predicted_class = class_output.max(1)
+            predicted_signal = signal_types[predicted_class.item()]
+
+            # Denormalize predicted parameters
+            params_norm = param_output.cpu().numpy()[0]
+            center_freq = params_norm[0] * 200.0
+            bandwidth = params_norm[1] * 200.0
+            power_dbm = params_norm[2] * 100.0 - 50
+            snr_db = params_norm[3] * 20.0 - 15
+
+            all_params[name] = {
+                'center_frequency': center_freq,
+                'bandwidth': bandwidth,
+                'power_dbm': power_dbm,
+                'estimated_snr': snr_db,
+                'modulation': predicted_signal
+            }
+
+            print(f"\n{'='*60}")
+            print(f"Signal: {name}")
+            print(f"{'='*60}")
+            print(f"  AI Predicted Type:    {predicted_signal}")
+            print(f"  Center Frequency:     {center_freq:.2f} Hz")
+            print(f"  Bandwidth:            {bandwidth:.2f} Hz")
+            print(f"  Signal Power:         {power_dbm:.2f} dBm")
+            print(f"  Estimated SNR:        {snr_db:.2f} dB")
+            print(f"{'='*60}")
 
     # Create figure with 4 rows (signals) x 3 columns (time, freq, spectrogram)
     fig = plt.figure(figsize=(20, 16))
@@ -507,14 +633,9 @@ def plot_sample_spectrograms():
         ax1.plot(time_axis[:500], np.real(sig[:500]), 'b-', linewidth=0.8, label='I (Real)', alpha=0.7)
         ax1.plot(time_axis[:500], np.imag(sig[:500]), 'r-', linewidth=0.8, label='Q (Imag)', alpha=0.7)
 
-        # Mark onset time
-        if params['onset_time'] < 0.5:  # Only show if in visible range
-            ax1.axvline(params['onset_time'], color='red', linestyle='--', linewidth=1.5,
-                       label=f"Onset: {params['onset_time']:.3f}s", alpha=0.7)
-
         ax1.set_xlabel('Time [s]')
         ax1.set_ylabel('Amplitude')
-        ax1.set_title(f'{name} - Time Domain\nPower: {params["power_dbm"]:.1f} dBm')
+        ax1.set_title(f'{name} - Time Domain\nAI Predicted: {params["modulation"]}, Power: {params["power_dbm"]:.1f} dBm')
         ax1.legend(loc='upper right', fontsize=7)
         ax1.grid(True, alpha=0.3)
 
@@ -528,13 +649,13 @@ def plot_sample_spectrograms():
         positive_freq_idx = fft_freq >= 0
         ax2.plot(fft_freq[positive_freq_idx], fft_magnitude[positive_freq_idx], 'g-', linewidth=1.0)
 
-        # Mark center frequency
+        # Mark AI-predicted center frequency
         ax2.axvline(params['center_frequency'], color='red', linestyle='--',
-                   linewidth=1.5, label=f"Fc: {params['center_frequency']:.1f} Hz", alpha=0.7)
+                   linewidth=1.5, label=f"AI Fc: {params['center_frequency']:.1f} Hz", alpha=0.7)
 
         ax2.set_xlabel('Frequency [Hz]')
         ax2.set_ylabel('Magnitude [dB]')
-        ax2.set_title(f'{name} - Frequency Spectrum\nBW: {params["bandwidth"]:.1f} Hz (99%), {params["bandwidth_3db"]:.1f} Hz (3dB)')
+        ax2.set_title(f'{name} - Frequency Spectrum\nAI BW: {params["bandwidth"]:.1f} Hz')
         ax2.legend(loc='upper right', fontsize=7)
         ax2.grid(True, alpha=0.3)
         ax2.set_xlim([0, gen.fs/2])
@@ -564,26 +685,22 @@ def create_parameter_table(all_params, ground_truth):
     ax2.axis('tight')
     ax2.axis('off')
 
-    # Table 1: Extracted Parameters
+    # Table 1: AI-Estimated Parameters
     headers1 = ['Signal\nType',
+                'AI Predicted\nType',
                 'Center Freq\n(Fc) [Hz]',
+                'Bandwidth\n[Hz]',
                 'Power\n[dBm]',
-                'Bandwidth\n(99%) [Hz]',
-                'Bandwidth\n(3dB) [Hz]',
-                'Modulation\nType',
-                'Onset\nTime [s]',
                 'Estimated\nSNR [dB]']
 
     table_data1 = []
     for name, params in all_params.items():
         row = [
             name,
-            f"{params['center_frequency']:.1f}",
-            f"{params['power_dbm']:.2f}",
-            f"{params['bandwidth']:.1f}",
-            f"{params['bandwidth_3db']:.1f}",
             params['modulation'],
-            f"{params['onset_time']:.4f}",
+            f"{params['center_frequency']:.1f}",
+            f"{params['bandwidth']:.1f}",
+            f"{params['power_dbm']:.2f}",
             f"{params['estimated_snr']:.1f}"
         ]
         table_data1.append(row)
@@ -591,7 +708,7 @@ def create_parameter_table(all_params, ground_truth):
     # Create extracted parameters table
     table1 = ax1.table(cellText=table_data1, colLabels=headers1,
                        cellLoc='center', loc='center',
-                       colWidths=[0.12, 0.13, 0.12, 0.14, 0.14, 0.13, 0.11, 0.11])
+                       colWidths=[0.15, 0.2, 0.2, 0.15, 0.15, 0.15])
 
     table1.auto_set_font_size(False)
     table1.set_fontsize(9)
@@ -612,13 +729,13 @@ def create_parameter_table(all_params, ground_truth):
             else:
                 cell.set_facecolor('white')
 
-    ax1.set_title('Extracted Signal Parameters', fontsize=12, fontweight='bold', pad=10)
+    ax1.set_title('AI-Estimated Signal Parameters', fontsize=12, fontweight='bold', pad=10)
 
-    # Table 2: Ground Truth vs Extracted Comparison
+    # Table 2: Ground Truth vs AI Estimation Comparison
     headers2 = ['Signal\nType',
                 'Parameter',
                 'Ground Truth\n[Hz]',
-                'Extracted\n[Hz]',
+                'AI Predicted\n[Hz]',
                 'Error\n[Hz]',
                 'Error\n[%]']
 
@@ -639,28 +756,16 @@ def create_parameter_table(all_params, ground_truth):
             f"{fc_error_pct:+.1f}"
         ])
 
-        # 99% Bandwidth comparison
+        # Bandwidth comparison
         bw_error = ex['bandwidth'] - gt['bandwidth']
         bw_error_pct = (bw_error / gt['bandwidth'] * 100) if gt['bandwidth'] != 0 else 0
         table_data2.append([
             '',
-            'BW (99%)',
+            'Bandwidth',
             f"{gt['bandwidth']:.1f}",
             f"{ex['bandwidth']:.1f}",
             f"{bw_error:+.1f}",
             f"{bw_error_pct:+.1f}" if gt['bandwidth'] != 0 else 'N/A'
-        ])
-
-        # 3dB Bandwidth comparison
-        bw3_error = ex['bandwidth_3db'] - gt['bandwidth_3db']
-        bw3_error_pct = (bw3_error / gt['bandwidth_3db'] * 100) if gt['bandwidth_3db'] != 0 else 0
-        table_data2.append([
-            '',
-            'BW (3dB)',
-            f"{gt['bandwidth_3db']:.1f}",
-            f"{ex['bandwidth_3db']:.1f}",
-            f"{bw3_error:+.1f}",
-            f"{bw3_error_pct:+.1f}" if gt['bandwidth_3db'] != 0 else 'N/A'
         ])
 
     # Create comparison table
@@ -700,10 +805,10 @@ def create_parameter_table(all_params, ground_truth):
                 except:
                     pass
 
-    ax2.set_title('Ground Truth vs Extracted Parameters Comparison',
+    ax2.set_title('Ground Truth vs AI-Estimated Parameters Comparison',
                   fontsize=12, fontweight='bold', pad=10)
 
-    plt.suptitle('Signal Parameter Analysis Summary', fontsize=14, fontweight='bold', y=0.98)
+    plt.suptitle('AI-Based Signal Parameter Analysis Summary', fontsize=14, fontweight='bold', y=0.98)
     plt.tight_layout(rect=[0, 0, 1, 0.97])
     plt.savefig('signal_parameters.png', dpi=150, bbox_inches='tight')
     plt.close()
@@ -737,18 +842,22 @@ def plot_training_results(history):
     print("✓ Saved training_results.png")
 
 def plot_confusion_matrix(model, test_loader):
-    """Generate and plot confusion matrix"""
+    """Generate and plot confusion matrix with parameter estimation results"""
     model.eval()
     all_preds = []
     all_labels = []
+    all_param_preds = []
+    all_param_gt = []
 
     with torch.no_grad():
-        for inputs, labels in test_loader:
+        for inputs, labels, params in test_loader:
             inputs = inputs.to(device)
-            outputs = model(inputs)
-            _, predicted = outputs.max(1)
+            class_outputs, param_outputs = model(inputs)
+            _, predicted = class_outputs.max(1)
             all_preds.extend(predicted.cpu().numpy())
             all_labels.extend(labels.numpy())
+            all_param_preds.extend(param_outputs.cpu().numpy())
+            all_param_gt.extend(params.numpy())
 
     cm = confusion_matrix(all_labels, all_preds)
 
@@ -769,19 +878,37 @@ def plot_confusion_matrix(model, test_loader):
     print(classification_report(all_labels, all_preds,
                                target_names=['Sine', 'Chirp', 'FSK', 'FHSS']))
 
+    # Print parameter estimation results
+    all_param_preds = np.array(all_param_preds)
+    all_param_gt = np.array(all_param_gt)
+
+    # Denormalize parameters
+    fc_pred = all_param_preds[:, 0] * 200.0
+    fc_gt = all_param_gt[:, 0] * 200.0
+    bw_pred = all_param_preds[:, 1] * 200.0
+    bw_gt = all_param_gt[:, 1] * 200.0
+    power_pred = all_param_preds[:, 2] * 100.0 - 50
+    power_gt = all_param_gt[:, 2] * 100.0 - 50
+    snr_pred = all_param_preds[:, 3] * 20.0 - 15
+    snr_gt = all_param_gt[:, 3] * 20.0 - 15
+
+    print("\nParameter Estimation Performance (AI Model):")
+    print("="*60)
+    print(f"  Center Frequency MAE:  {np.mean(np.abs(fc_pred - fc_gt)):.2f} Hz")
+    print(f"  Bandwidth MAE:         {np.mean(np.abs(bw_pred - bw_gt)):.2f} Hz")
+    print(f"  Power MAE:             {np.mean(np.abs(power_pred - power_gt)):.2f} dBm")
+    print(f"  SNR MAE:               {np.mean(np.abs(snr_pred - snr_gt)):.2f} dB")
+    print("="*60)
+
 # ==================== Main ====================
 
 def main():
     print("="*70)
-    print("SIGINT Neural Receiver Simulation")
+    print("SIGINT Multi-Task Neural Receiver Simulation")
     print("="*70)
 
-    # 1. Generate sample spectrograms
-    print("\n[1/4] Generating sample spectrograms...")
-    plot_sample_spectrograms()
-
-    # 2. Create dataset
-    print("\n[2/4] Creating dataset...")
+    # 1. Create dataset
+    print("\n[1/4] Creating dataset...")
     dataset = SIGINTDataset(n_samples=2000)
 
     # Split dataset
@@ -798,17 +925,21 @@ def main():
 
     print(f"  Train: {train_size}, Val: {val_size}, Test: {test_size}")
 
-    # 3. Train model
-    print("\n[3/4] Training classifier...")
+    # 2. Train model
+    print("\n[2/4] Training multi-task classifier...")
     model = SIGINTClassifier(num_classes=4).to(device)
     print(f"  Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     history = train_model(model, train_loader, val_loader, num_epochs=20)
 
-    # 4. Evaluate and visualize
-    print("\n[4/4] Generating results...")
+    # 3. Evaluate and visualize
+    print("\n[3/4] Generating results...")
     plot_training_results(history)
     plot_confusion_matrix(model, test_loader)
+
+    # 4. Generate sample spectrograms with AI-based parameter estimation
+    print("\n[4/4] Generating sample spectrograms with AI parameter estimation...")
+    plot_sample_spectrograms(model)
 
     # Save model
     torch.save(model.state_dict(), 'sigint_detector_model.pth')
