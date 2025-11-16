@@ -144,10 +144,18 @@ model.load_state_dict(checkpoint['model_state_dict'])
 model.eval()
 
 # 테스트 신호 생성
+from src.data.signal_generator import SignalParams
+
 signal_gen = SignalGenerator(seed=42)
-test_params = signal_gen.generate_random_params(
-    modulation_type='FM',
-    snr_range=(-8, -8)
+
+# 특정 변조 타입의 파라미터 직접 생성
+test_params = SignalParams(
+    center_freq=0.1,
+    bandwidth=0.05,
+    power=1.0,
+    snr_db=-8.0,
+    symbol_rate=200.0,
+    modulation_type='FM'  # 여기를 변경하여 다른 변조 타입 테스트
 )
 _, test_signal = signal_gen.generate_signal(1024, test_params)
 
