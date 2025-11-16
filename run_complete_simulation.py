@@ -75,11 +75,19 @@ def main():
 
     print(f"생성 중: {len(modulation_types)}개 신호 타입 (SNR = {snr_db} dB)")
 
+    # SignalParams import
+    from src.data.signal_generator import SignalParams
+
     signals = []
     for mod_type in modulation_types:
-        params = signal_gen.generate_random_params(
-            modulation_type=mod_type,
-            snr_range=(snr_db, snr_db)
+        # 파라미터 직접 생성
+        params = SignalParams(
+            center_freq=np.random.uniform(-0.3, 0.3),
+            bandwidth=np.random.uniform(0.05, 0.2),
+            power=1.0 if mod_type != 'No-signal' else 0.0,
+            snr_db=snr_db if mod_type != 'No-signal' else -np.inf,
+            symbol_rate=np.random.uniform(100, 500),
+            modulation_type=mod_type
         )
         signal, noisy_signal = signal_gen.generate_signal(sequence_length, params)
         signals.append((mod_type, noisy_signal, params))
