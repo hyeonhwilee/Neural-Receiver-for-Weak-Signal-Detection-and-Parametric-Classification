@@ -113,12 +113,23 @@ class SignalGenerator:
 
         # Generate random binary data
         symbol_duration = 1.0 / params.symbol_rate
-        n_symbols = int(n_samples * self.sample_rate / symbol_duration)
+        samples_per_symbol = max(1, int(symbol_duration * self.sample_rate))
+
+        # Calculate number of symbols needed (with extra to ensure enough samples)
+        n_symbols = int(np.ceil(n_samples / samples_per_symbol)) + 1
         binary_data = np.random.randint(0, 2, n_symbols)
 
-        # Repeat each symbol for its duration
-        samples_per_symbol = max(1, int(symbol_duration * self.sample_rate))
-        data_upsampled = np.repeat(binary_data, samples_per_symbol)[:n_samples]
+        # Repeat each symbol for its duration and ensure exactly n_samples
+        data_upsampled = np.repeat(binary_data, samples_per_symbol)
+
+        # Ensure we have exactly n_samples (pad or truncate)
+        if len(data_upsampled) < n_samples:
+            # Pad with last value if needed
+            data_upsampled = np.pad(data_upsampled, (0, n_samples - len(data_upsampled)),
+                                   mode='edge')
+        else:
+            # Truncate if needed
+            data_upsampled = data_upsampled[:n_samples]
 
         # FSK modulation
         freq_separation = params.bandwidth * self.sample_rate * 0.5
