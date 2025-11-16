@@ -147,21 +147,21 @@ def main():
     print(f"SNR 범위: {config['snr_range'][0]} ~ {config['snr_range'][1]} dB")
 
     train_dataset = SignalDataset(
-        num_samples=config['train_samples'],
+        n_samples=config['train_samples'],
         sequence_length=config['sequence_length'],
         snr_range=config['snr_range'],
         seed=42
     )
 
     val_dataset = SignalDataset(
-        num_samples=config['val_samples'],
+        n_samples=config['val_samples'],
         sequence_length=config['sequence_length'],
         snr_range=config['snr_range'],
         seed=43
     )
 
     test_dataset = SignalDataset(
-        num_samples=config['test_samples'],
+        n_samples=config['test_samples'],
         sequence_length=config['sequence_length'],
         snr_range=config['snr_range'],
         seed=44
