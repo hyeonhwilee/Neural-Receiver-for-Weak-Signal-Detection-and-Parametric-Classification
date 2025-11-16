@@ -117,7 +117,7 @@ class SignalGenerator:
         binary_data = np.random.randint(0, 2, n_symbols)
 
         # Repeat each symbol for its duration
-        samples_per_symbol = int(symbol_duration / self.sample_rate)
+        samples_per_symbol = max(1, int(symbol_duration * self.sample_rate))
         data_upsampled = np.repeat(binary_data, samples_per_symbol)[:n_samples]
 
         # FSK modulation

@@ -81,12 +81,13 @@ def main():
     signals = []
     for mod_type in modulation_types:
         # 파라미터 직접 생성
+        # symbol_rate를 정규화된 값으로 설정 (0.01 ~ 0.2 = 각 심볼당 5~100 샘플)
         params = SignalParams(
             center_freq=np.random.uniform(-0.3, 0.3),
             bandwidth=np.random.uniform(0.05, 0.2),
             power=1.0 if mod_type != 'No-signal' else 0.0,
             snr_db=snr_db if mod_type != 'No-signal' else -np.inf,
-            symbol_rate=np.random.uniform(100, 500),
+            symbol_rate=np.random.uniform(0.01, 0.2),
             modulation_type=mod_type
         )
         signal, noisy_signal = signal_gen.generate_signal(sequence_length, params)

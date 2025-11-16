@@ -154,7 +154,7 @@ test_params = SignalParams(
     bandwidth=0.05,
     power=1.0,
     snr_db=-8.0,
-    symbol_rate=200.0,
+    symbol_rate=0.05,  # 정규화된 심볼레이트 (0.01 ~ 0.2 권장)
     modulation_type='FM'  # 여기를 변경하여 다른 변조 타입 테스트
 )
 _, test_signal = signal_gen.generate_signal(1024, test_params)
