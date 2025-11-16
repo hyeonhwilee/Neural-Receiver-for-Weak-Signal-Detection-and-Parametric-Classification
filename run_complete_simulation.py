@@ -181,11 +181,13 @@ def main():
     # ================================================================
     print_banner("4/8: 모델 생성")
 
+    from src.data.signal_generator import ModulationType
+
     model_config = {
         'input_channels': 2,
         'base_channels': 64,
         'num_blocks': 4,
-        'num_classes': len(train_dataset.modulation_classes),
+        'num_classes': ModulationType.get_num_classes(),
         'num_params': 4,
         'dropout': 0.3
     }
@@ -298,7 +300,7 @@ def main():
         model=model,
         test_loader=test_loader,
         device=device,
-        class_names=train_dataset.modulation_classes
+        class_names=ModulationType.get_class_names()
     )
 
     print("평가 실행 중...")
@@ -364,9 +366,10 @@ def main():
     # 혼동 행렬
     fig, ax = plt.subplots(figsize=(12, 10))
     cm = results['classification']['confusion_matrix']
+    class_names = ModulationType.get_class_names()
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                xticklabels=train_dataset.modulation_classes,
-                yticklabels=train_dataset.modulation_classes,
+                xticklabels=class_names,
+                yticklabels=class_names,
                 ax=ax, cbar_kws={'label': 'Count'})
     ax.set_xlabel('Predicted')
     ax.set_ylabel('True')
