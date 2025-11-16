@@ -188,7 +188,6 @@ def main():
         'base_channels': 64,
         'num_blocks': 4,
         'num_classes': ModulationType.get_num_classes(),
-        'num_params': 4,
         'dropout': 0.3
     }
 
