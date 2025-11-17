@@ -251,6 +251,8 @@ class Trainer:
         if self.use_tensorboard:
             self.writer.close()
 
+        return self.training_history
+
     def save_checkpoint(self, filename: str, metrics: Dict[str, float]):
         """Save model checkpoint"""
         checkpoint = {
