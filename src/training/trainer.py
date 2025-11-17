@@ -204,7 +204,7 @@ class Trainer:
 
             # Update learning rate
             if self.scheduler is not None:
-                self.scheduler.step()
+                self.scheduler.step(val_losses['total_loss'])
 
             # Log to console
             print(f"\nEpoch {epoch}/{num_epochs}")
