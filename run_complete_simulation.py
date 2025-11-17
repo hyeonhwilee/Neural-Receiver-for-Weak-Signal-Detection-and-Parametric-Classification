@@ -210,7 +210,6 @@ def main():
         'num_epochs': 50,
         'learning_rate': 0.001,
         'weight_decay': 1e-5,
-        'save_dir': 'experiments/neural_receiver',
         'loss_weights': {
             'detection': 1.0,
             'classification': 1.0,
@@ -222,15 +221,36 @@ def main():
     print(f"학습률: {training_config['learning_rate']}")
     print(f"예상 소요 시간: {'5-10분 (GPU)' if torch.cuda.is_available() else '15-20분 (CPU)'}")
 
+    # Criterion 및 Optimizer 생성
+    from src.models import MultiTaskLoss
+
+    criterion = MultiTaskLoss(
+        detection_weight=training_config['loss_weights']['detection'],
+        classification_weight=training_config['loss_weights']['classification'],
+        regression_weight=training_config['loss_weights']['regression']
+    )
+
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=training_config['learning_rate'],
+        weight_decay=training_config['weight_decay']
+    )
+
+    # Learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=5, verbose=True
+    )
+
     trainer = Trainer(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
+        criterion=criterion,
+        optimizer=optimizer,
+        scheduler=scheduler,
         device=device,
-        learning_rate=training_config['learning_rate'],
-        weight_decay=training_config['weight_decay'],
-        save_dir=training_config['save_dir'],
-        loss_weights=training_config['loss_weights']
+        output_dir='experiments',
+        experiment_name='neural_receiver'
     )
 
     print("\n훈련 시작...\n")
@@ -282,7 +302,7 @@ def main():
     # ================================================================
     print_banner("6/8: 최적 모델 로드")
 
-    best_model_path = Path(training_config['save_dir']) / 'checkpoints' / 'best_model.pt'
+    best_model_path = Path('experiments/neural_receiver/checkpoints/best_model.pt')
     checkpoint = torch.load(best_model_path, map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
