@@ -189,8 +189,8 @@ class SignalGenerator:
         bandwidth = params.bandwidth * self.sample_rate
 
         # Create chirp pulses
-        n_chirps = int(n_samples / (chirp_duration * self.sample_rate))
-        chirp_samples = int(chirp_duration * self.sample_rate)
+        chirp_samples = max(1, int(chirp_duration * self.sample_rate))
+        n_chirps = max(1, int(n_samples / chirp_samples))
 
         signal = np.zeros(n_samples, dtype=complex)
 
@@ -221,7 +221,7 @@ class SignalGenerator:
 
         # Repeat code sequence
         chip_duration = 1.0 / (params.symbol_rate * len(barker_13))
-        samples_per_chip = int(chip_duration * self.sample_rate)
+        samples_per_chip = max(1, int(chip_duration * self.sample_rate))
 
         # Create phase-coded sequence
         phase_code = np.repeat(barker_13, samples_per_chip)
@@ -245,7 +245,7 @@ class SignalGenerator:
         # Frequency hopping pattern
         n_hops = 8
         hop_duration = 1.0 / (params.symbol_rate * n_hops)
-        samples_per_hop = int(hop_duration * self.sample_rate)
+        samples_per_hop = max(1, int(hop_duration * self.sample_rate))
 
         # Random frequency hops
         freq_offset = params.bandwidth * self.sample_rate * 0.4
