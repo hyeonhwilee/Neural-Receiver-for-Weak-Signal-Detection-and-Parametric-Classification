@@ -60,6 +60,9 @@ class Trainer:
         self.training_history = {
             'train_loss': [],
             'val_loss': [],
+            'val_detection_acc': [],
+            'val_classification_acc': [],
+            'val_regression_mae': [],
             'learning_rate': []
         }
 
@@ -226,6 +229,9 @@ class Trainer:
             # Save training history
             self.training_history['train_loss'].append(train_losses['total_loss'])
             self.training_history['val_loss'].append(val_losses['total_loss'])
+            self.training_history['val_detection_acc'].append(val_losses['detection_accuracy'])
+            self.training_history['val_classification_acc'].append(val_losses['classification_accuracy'])
+            self.training_history['val_regression_mae'].append(val_losses['regression_mae'])
             self.training_history['learning_rate'].append(self.optimizer.param_groups[0]['lr'])
 
             # Save best model
