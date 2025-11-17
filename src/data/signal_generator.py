@@ -164,8 +164,8 @@ class SignalGenerator:
 
         # Create pulse train
         pulse_train = np.zeros(n_samples)
-        pulse_period = int(self.sample_rate / prf)
-        pulse_samples = int(pulse_width * self.sample_rate)
+        pulse_period = max(1, int(self.sample_rate / prf))
+        pulse_samples = max(1, int(pulse_width * self.sample_rate))
 
         for i in range(0, n_samples, pulse_period):
             end_idx = min(i + pulse_samples, n_samples)
@@ -273,7 +273,7 @@ class SignalGenerator:
 
         # Single pulse or pulse train
         pulse_width = 1.0 / (params.symbol_rate * 5)
-        pulse_samples = int(pulse_width * self.sample_rate)
+        pulse_samples = max(1, int(pulse_width * self.sample_rate))
 
         pulse = np.zeros(n_samples)
         pulse[:pulse_samples] = 1.0
@@ -293,13 +293,13 @@ class SignalGenerator:
         t = np.arange(n_samples) / self.sample_rate
 
         pulse_duration = 1.0 / params.symbol_rate
-        pulse_samples = int(pulse_duration * self.sample_rate)
+        pulse_samples = max(1, int(pulse_duration * self.sample_rate))
 
         signal = np.zeros(n_samples, dtype=complex)
 
         # Generate chirp with phase coding
         bandwidth = params.bandwidth * self.sample_rate
-        chirp_rate = bandwidth / pulse_duration
+        chirp_rate = bandwidth / pulse_duration if pulse_duration > 0 else bandwidth
 
         for i in range(0, n_samples, pulse_samples):
             end_idx = min(i + pulse_samples, n_samples)
